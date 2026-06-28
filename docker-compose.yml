@@ -1,0 +1,67 @@
+version: "3.9"
+
+# ═══════════════════════════════════════════════════════════════════
+# docker-compose for local development testing
+# Usage:
+#   cp .env.example .env   (fill in GOOGLE_AI_KEY)
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# To run a manual scrape:
+#   docker compose run --rm scraper
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Web server (always running) ──────────────────────────────────
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: my-news-server
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      FRONTEND_DIR: /app/frontend
+      BIND_ADDR: "0.0.0.0:3000"
+      RUST_LOG: "news_server=info"
+    volumes:
+      - news-data:/app/data
+      - claude-creds:/root/.claude
+      # Live-reload frontend during development:
+      - ./frontend:/app/frontend:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/media"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── One-shot scraper (run manually or via cron) ──────────────────
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: my-news-scraper
+    profiles: ["scraper"]   # only starts when explicitly requested
+    command: >
+      sh -c "Xvfb :99 -screen 0 1920x1080x24 -ac &>/dev/null &
+             sleep 2 &&
+             python /app/scraper/scraper.py"
+    env_file: .env
+    environment:
+      DISPLAY: ":99"
+      DATA_DIR: /app/data
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - news-data:/app/data
+      - claude-creds:/root/.claude
+      - ./scraper:/app/scraper:ro  # live scraper code
+    depends_on:
+      - server
+
+volumes:
+  news-data:
+  claude-creds:

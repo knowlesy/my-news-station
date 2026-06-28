@@ -1,0 +1,41 @@
+[package]
+name        = "news-server"
+version     = "0.1.0"
+edition     = "2021"
+description = "Axum web server for the Daily News Media Station"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+# ── Web framework ─────────────────────────────────────────────────
+axum        = { version = "0.7", features = ["macros"] }
+tokio       = { version = "1",   features = ["full"] }
+
+# ── Static file serving & middleware ─────────────────────────────
+tower-http  = { version = "0.5", features = ["fs", "cors", "trace"] }
+tower       = { version = "0.4" }
+
+# ── Serialisation ─────────────────────────────────────────────────
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# ── Date/time ─────────────────────────────────────────────────────
+chrono      = { version = "0.4", features = ["serde"] }
+
+# ── Filesystem traversal ──────────────────────────────────────────
+walkdir     = "2"
+
+# ── Regex (file date extraction) ─────────────────────────────────
+regex       = "1"
+
+# ── Structured logging ────────────────────────────────────────────
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level   = 3
+lto         = true
+codegen-units = 1
+strip       = true   # Strip debug symbols → smaller binary

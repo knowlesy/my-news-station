@@ -1,0 +1,53 @@
+# ═══════════════════════════════════════════════════════════════════
+# Kubernetes — Persistent Volume Claims
+#
+# 1. news-data-pvc      → stores generated EPUB + MP3 files (10-day rolling window)
+# 2. claude-creds-pvc   → stores ~/.claude/ OAuth tokens for the Claude CLI
+#                         (survives pod restarts — auth only needed once)
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-news
+  labels:
+    app.kubernetes.io/name: my-news
+---
+# ── Media storage PVC ────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: news-data-pvc
+  namespace: my-news
+  labels:
+    app.kubernetes.io/part-of: my-news
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # Remove storageClassName to use the cluster default,
+  # or set explicitly: e.g. "local-path", "longhorn", "nfs-client"
+  # storageClassName: local-path
+---
+# ── Claude CLI credential storage PVC ───────────────────────────
+# Persists OAuth tokens so you only need to authenticate once.
+# Auth procedure:
+#   kubectl exec -it -n my-news deploy/news-server -- claude
+#   → follow URL → paste code → tokens saved to /root/.claude/
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-creds-pvc
+  namespace: my-news
+  labels:
+    app.kubernetes.io/part-of: my-news
+    app.kubernetes.io/component: claude-credentials
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 128Mi
+  # storageClassName: local-path

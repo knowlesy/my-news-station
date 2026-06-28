@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════════
+# my-news — .gitignore
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Secrets — NEVER commit these ────────────────────────────────
+.env
+cookies.json          # Playwright session cookies (contains auth tokens)
+
+# ── Generated media output ───────────────────────────────────────
+data/
+*.epub
+*.mp3
+
+# ── Python ───────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Rust / Cargo ─────────────────────────────────────────────────
+server/target/
+
+# ── Node / Claude CLI cache ──────────────────────────────────────
+node_modules/
+.npm/
+
+# ── Docker ───────────────────────────────────────────────────────
+*.tar                 # Saved docker images
+
+# ── macOS ────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverrides
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Editors ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Logs ────────────────────────────────────────────────────────
+*.log

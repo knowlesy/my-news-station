@@ -1,0 +1,251 @@
+# ═══════════════════════════════════════════════════════════════════
+# Kubernetes — Deployment + CronJob
+#
+# Deployment:   Runs the Rust web server continuously (always-on dashboard)
+# CronJob:      Runs the Python scraper daily at 06:00 UTC
+#
+# Secrets required (create before applying):
+#   kubectl create secret generic news-secrets \
+#     --namespace my-news \
+#     --from-literal=LLM_BACKEND=claude_cli \
+#     --from-literal=GOOGLE_AI_KEY="" \
+#     --from-literal=ANTHROPIC_API_KEY=""
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Secrets scaffold (edit values before applying) ────────────────
+# NOTE: base64-encode your real values, or use `kubectl create secret` above.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: news-secrets
+  namespace: my-news
+type: Opaque
+stringData:
+  LLM_BACKEND:       "claude_cli"     # gemini | claude_api | claude_cli
+  GOOGLE_AI_KEY:     ""               # Required if LLM_BACKEND=gemini
+  ANTHROPIC_API_KEY: ""               # Required if LLM_BACKEND=claude_api
+  CLAUDE_MODEL:      "claude-opus-4-5"
+  GEMINI_MODEL:      "gemini-1.5-pro"
+
+---
+# ── Web Server Deployment ─────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-server
+  namespace: my-news
+  labels:
+    app.kubernetes.io/name:      news-server
+    app.kubernetes.io/part-of:   my-news
+    app.kubernetes.io/component: web-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: news-server
+  strategy:
+    type: Recreate   # Recreate to avoid PVC mount conflicts on RWO volumes
+  template:
+    metadata:
+      labels:
+        app: news-server
+        app.kubernetes.io/name: news-server
+    spec:
+      # Security context — run as non-root where possible
+      securityContext:
+        fsGroup: 1000
+
+      containers:
+        - name: news-server
+          image: my-news:latest     # Replace with your registry image
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          env:
+            - name: DATA_DIR
+              value: /app/data
+            - name: FRONTEND_DIR
+              value: /app/frontend
+            - name: BIND_ADDR
+              value: "0.0.0.0:3000"
+            - name: RUST_LOG
+              value: "news_server=info,tower_http=warn"
+            # LLM credentials from Secret
+            - name: LLM_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: news-secrets
+                  key: LLM_BACKEND
+            - name: GOOGLE_AI_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: news-secrets
+                  key: GOOGLE_AI_KEY
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: news-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: CLAUDE_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: news-secrets
+                  key: CLAUDE_MODEL
+                  optional: true
+
+          volumeMounts:
+            - name: news-data
+              mountPath: /app/data
+            - name: claude-creds
+              mountPath: /root/.claude
+
+          resources:
+            requests:
+              cpu:    100m
+              memory: 128Mi
+            limits:
+              cpu:    500m
+              memory: 512Mi
+
+          livenessProbe:
+            httpGet:
+              path: /api/media
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /api/media
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: news-data
+          persistentVolumeClaim:
+            claimName: news-data-pvc
+        - name: claude-creds
+          persistentVolumeClaim:
+            claimName: claude-creds-pvc
+
+---
+# ── Daily Scraper CronJob ─────────────────────────────────────────
+# Runs the Python pipeline every day at 06:00 UTC.
+# Adjust the schedule field to your preferred time zone offset.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-scraper
+  namespace: my-news
+  labels:
+    app.kubernetes.io/name:      news-scraper
+    app.kubernetes.io/part-of:   my-news
+    app.kubernetes.io/component: scraper
+spec:
+  # 06:00 UTC daily — adjust as needed
+  schedule: "0 6 * * *"
+
+  # Keep last 3 successful + 1 failed job logs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+
+  # If previous job is still running when next trigger fires, skip the new one
+  concurrencyPolicy: Forbid
+
+  jobTemplate:
+    spec:
+      # Retry on transient failures (network, rate limits, etc.)
+      backoffLimit: 2
+      activeDeadlineSeconds: 5400   # Kill after 90 minutes
+
+      template:
+        metadata:
+          labels:
+            app: news-scraper
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+            - name: scraper
+              image: my-news:latest   # Same image as the server
+              imagePullPolicy: IfNotPresent
+
+              # Start Xvfb for Playwright, then run the scraper
+              command:
+                - sh
+                - -c
+                - |
+                  Xvfb :99 -screen 0 1920x1080x24 -ac &>/dev/null &
+                  sleep 2
+                  echo "Starting scraper — $(date)"
+                  python /app/scraper/scraper.py
+                  EXIT_CODE=$?
+                  echo "Scraper finished with exit code $EXIT_CODE"
+                  exit $EXIT_CODE
+
+              env:
+                - name: DISPLAY
+                  value: ":99"
+                - name: DATA_DIR
+                  value: /app/data
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: LLM_BACKEND
+                  valueFrom:
+                    secretKeyRef:
+                      name: news-secrets
+                      key: LLM_BACKEND
+                - name: GOOGLE_AI_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: news-secrets
+                      key: GOOGLE_AI_KEY
+                      optional: true
+                - name: ANTHROPIC_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: news-secrets
+                      key: ANTHROPIC_API_KEY
+                      optional: true
+                - name: CLAUDE_MODEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: news-secrets
+                      key: CLAUDE_MODEL
+                      optional: true
+                - name: GEMINI_MODEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: news-secrets
+                      key: GEMINI_MODEL
+                      optional: true
+
+              volumeMounts:
+                - name: news-data
+                  mountPath: /app/data
+                - name: claude-creds
+                  mountPath: /root/.claude
+
+              resources:
+                requests:
+                  cpu:    500m
+                  memory: 1Gi
+                limits:
+                  cpu:    2000m
+                  memory: 3Gi
+
+          volumes:
+            - name: news-data
+              persistentVolumeClaim:
+                claimName: news-data-pvc
+            - name: claude-creds
+              persistentVolumeClaim:
+                claimName: claude-creds-pvc

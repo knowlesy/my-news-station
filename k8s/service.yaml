@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════════
+# Kubernetes — Service
+#
+# Exposes the news-server pod on the home lab network.
+# Two options provided:
+#   1. ClusterIP  — internal cluster access only (default)
+#   2. NodePort   — accessible from any device on your LAN
+#
+# To switch to NodePort, change `type: ClusterIP` to `type: NodePort`
+# and uncomment the `nodePort` field.
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Service
+metadata:
+  name: news-server
+  namespace: my-news
+  labels:
+    app.kubernetes.io/name:      news-server
+    app.kubernetes.io/part-of:   my-news
+    app.kubernetes.io/component: web-server
+  annotations:
+    # Uncomment if you use MetalLB for home-lab LoadBalancer support:
+    # metallb.universe.tf/address-pool: default
+spec:
+  # ── Option A: ClusterIP (cluster-internal only) ───────────────
+  type: ClusterIP
+  # ── Option B: NodePort (LAN access via <node-ip>:30900) ───────
+  # type: NodePort
+
+  selector:
+    app: news-server
+
+  ports:
+    - name:       http
+      protocol:   TCP
+      port:       80          # Service port (cluster-internal)
+      targetPort: 3000        # Container port
+      # nodePort: 30900       # Uncomment for NodePort; range 30000-32767
+
+---
+# ── Optional: LoadBalancer service for MetalLB / cloud ───────────
+# Uncomment if your cluster has a LoadBalancer provider.
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: news-server-lb
+#   namespace: my-news
+# spec:
+#   type: LoadBalancer
+#   selector:
+#     app: news-server
+#   ports:
+#     - name: http
+#       protocol: TCP
+#       port: 80
+#       targetPort: 3000

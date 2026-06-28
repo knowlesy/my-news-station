@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="mocha">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My News Station</title>
+  <meta name="description" content="Self-hosted AI-powered daily news digest with audio briefings and EPUB reader" />
+
+  <!-- epub.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ══════════════════════════════════════════════════════════════
+       CATPPUCCIN THEME SYSTEM — 4 flavours as CSS custom properties
+       ══════════════════════════════════════════════════════════════ */
+
+    :root, [data-theme="mocha"] {
+      --ctp-rosewater: #f5e0dc; --ctp-flamingo: #f2cdcd; --ctp-pink:    #f5c2e7;
+      --ctp-mauve:    #cba6f7; --ctp-red:      #f38ba8; --ctp-maroon:  #eba0ac;
+      --ctp-peach:    #fab387; --ctp-yellow:   #f9e2af; --ctp-green:   #a6e3a1;
+      --ctp-teal:     #94e2d5; --ctp-sky:      #89dceb; --ctp-sapphire:#74c7ec;
+      --ctp-blue:     #89b4fa; --ctp-lavender: #b4befe;
+      --ctp-text:     #cdd6f4; --ctp-subtext1: #bac2de; --ctp-subtext0:#a6adc8;
+      --ctp-overlay2: #9399b2; --ctp-overlay1: #7f849c; --ctp-overlay0:#6c7086;
+      --ctp-surface2: #585b70; --ctp-surface1: #45475a; --ctp-surface0:#313244;
+      --ctp-base:     #1e1e2e; --ctp-mantle:   #181825; --ctp-crust:   #11111b;
+      --ctp-accent: var(--ctp-mauve);
+      --ctp-accent2: var(--ctp-blue);
+      --theme-label: "Mocha";
+    }
+
+    [data-theme="macchiato"] {
+      --ctp-rosewater: #f4dbd6; --ctp-flamingo: #f0c6c6; --ctp-pink:    #f5bde6;
+      --ctp-mauve:    #c6a0f6; --ctp-red:      #ed8796; --ctp-maroon:  #ee99a0;
+      --ctp-peach:    #f5a97f; --ctp-yellow:   #eed49f; --ctp-green:   #a6da95;
+      --ctp-teal:     #8bd5ca; --ctp-sky:      #91d7e3; --ctp-sapphire:#7dc4e4;
+      --ctp-blue:     #8aadf4; --ctp-lavender: #b7bdf8;
+      --ctp-text:     #cad3f5; --ctp-subtext1: #b8c0e0; --ctp-subtext0:#a5adcb;
+      --ctp-overlay2: #939ab7; --ctp-overlay1: #8087a2; --ctp-overlay0:#6e738d;
+      --ctp-surface2: #5b6078; --ctp-surface1: #494d64; --ctp-surface0:#363a4f;
+      --ctp-base:     #24273a; --ctp-mantle:   #1e2030; --ctp-crust:   #181926;
+      --ctp-accent: var(--ctp-mauve);
+      --ctp-accent2: var(--ctp-blue);
+    }
+
+    [data-theme="frappe"] {
+      --ctp-rosewater: #f2d5cf; --ctp-flamingo: #eebebe; --ctp-pink:    #f4b8e4;
+      --ctp-mauve:    #ca9ee6; --ctp-red:      #e78284; --ctp-maroon:  #ea999c;
+      --ctp-peach:    #ef9f76; --ctp-yellow:   #e5c890; --ctp-green:   #a6d189;
+      --ctp-teal:     #81c8be; --ctp-sky:      #99d1db; --ctp-sapphire:#85c1dc;
+      --ctp-blue:     #8caaee; --ctp-lavender: #babbf1;
+      --ctp-text:     #c6d0f5; --ctp-subtext1: #b5bfe2; --ctp-subtext0:#a5adce;
+      --ctp-overlay2: #949cbb; --ctp-overlay1: #838ba7; --ctp-overlay0:#737994;
+      --ctp-surface2: #626880; --ctp-surface1: #51576d; --ctp-surface0:#414559;
+      --ctp-base:     #303446; --ctp-mantle:   #292c3c; --ctp-crust:   #232634;
+      --ctp-accent: var(--ctp-mauve);
+      --ctp-accent2: var(--ctp-blue);
+    }
+
+    [data-theme="latte"] {
+      --ctp-rosewater: #dc8a78; --ctp-flamingo: #dd7878; --ctp-pink:    #ea76cb;
+      --ctp-mauve:    #8839ef; --ctp-red:      #d20f39; --ctp-maroon:  #e64553;
+      --ctp-peach:    #fe640b; --ctp-yellow:   #df8e1d; --ctp-green:   #40a02b;
+      --ctp-teal:     #179299; --ctp-sky:      #04a5e5; --ctp-sapphire:#209fb5;
+      --ctp-blue:     #1e66f5; --ctp-lavender: #7287fd;
+      --ctp-text:     #4c4f69; --ctp-subtext1: #5c5f77; --ctp-subtext0:#6c6f85;
+      --ctp-overlay2: #7c7f93; --ctp-overlay1: #8c8fa1; --ctp-overlay0:#9ca0b0;
+      --ctp-surface2: #acb0be; --ctp-surface1: #bcc0cc; --ctp-surface0:#ccd0da;
+      --ctp-base:     #eff1f5; --ctp-mantle:   #e6e9ef; --ctp-crust:   #dce0e8;
+      --ctp-accent: var(--ctp-mauve);
+      --ctp-accent2: var(--ctp-blue);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       RESET & BASE
+       ══════════════════════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background-color: var(--ctp-base);
+      color: var(--ctp-text);
+      min-height: 100vh;
+      transition: background-color 0.3s ease, color 0.3s ease;
+      line-height: 1.6;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       TYPOGRAPHY
+       ══════════════════════════════════════════════════════════════ */
+
+    h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
+    h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); }
+    h2 { font-size: clamp(1rem, 2vw, 1.25rem); }
+    h3 { font-size: 0.95rem; font-weight: 600; }
+
+    /* ══════════════════════════════════════════════════════════════
+       LAYOUT
+       ══════════════════════════════════════════════════════════════ */
+
+    .app-wrapper {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 4rem;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       HEADER
+       ══════════════════════════════════════════════════════════════ */
+
+    .site-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      background: var(--ctp-mantle);
+      border: 1px solid var(--ctp-surface0);
+      border-radius: 16px;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .logo-area {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, var(--ctp-mauve), var(--ctp-blue));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+
+    .logo-text { line-height: 1.2; }
+    .logo-title { font-size: 1.1rem; font-weight: 700; color: var(--ctp-text); }
+    .logo-sub   { font-size: 0.72rem; color: var(--ctp-subtext0); text-transform: uppercase; letter-spacing: 0.1em; }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       FORM CONTROLS — Select, Button
+       ══════════════════════════════════════════════════════════════ */
+
+    select, button {
+      font-family: inherit;
+      font-size: 0.85rem;
+      border: 1px solid var(--ctp-surface1);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+
+    select {
+      background: var(--ctp-surface0);
+      color: var(--ctp-text);
+      padding: 0.5rem 2rem 0.5rem 0.75rem;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%236c7086' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.6rem center;
+    }
+
+    select:focus { border-color: var(--ctp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ctp-accent) 20%, transparent); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 1rem;
+      font-weight: 500;
+      background: var(--ctp-surface0);
+      color: var(--ctp-text);
+      border: 1px solid var(--ctp-surface1);
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--ctp-surface1); border-color: var(--ctp-surface2); transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--ctp-mauve), var(--ctp-blue));
+      color: var(--ctp-crust);
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .btn-primary:hover { filter: brightness(1.1); border-color: transparent; }
+
+    .btn-download {
+      background: color-mix(in srgb, var(--ctp-green) 15%, var(--ctp-surface0));
+      border-color: color-mix(in srgb, var(--ctp-green) 30%, var(--ctp-surface1));
+      color: var(--ctp-green);
+    }
+    .btn-download:hover {
+      background: color-mix(in srgb, var(--ctp-green) 25%, var(--ctp-surface0));
+      color: var(--ctp-green);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       STATUS BAR
+       ══════════════════════════════════════════════════════════════ */
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      background: var(--ctp-mantle);
+      border: 1px solid var(--ctp-surface0);
+      border-radius: 10px;
+      margin-bottom: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--ctp-subtext1);
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--ctp-overlay0);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.active   { background: var(--ctp-green); box-shadow: 0 0 6px var(--ctp-green); }
+    .status-dot.loading  { background: var(--ctp-yellow); animation: pulse-dot 1s infinite; }
+    .status-dot.error    { background: var(--ctp-red); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       DATE SELECTOR SECTION
+       ══════════════════════════════════════════════════════════════ */
+
+    .section { margin-bottom: 2rem; }
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--ctp-overlay1);
+      margin-bottom: 0.75rem;
+    }
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--ctp-surface0);
+    }
+
+    .date-grid {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .date-chip {
+      padding: 0.4rem 0.85rem;
+      border-radius: 20px;
+      border: 1px solid var(--ctp-surface1);
+      background: var(--ctp-surface0);
+      color: var(--ctp-subtext1);
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+    .date-chip:hover { background: var(--ctp-surface1); color: var(--ctp-text); }
+    .date-chip.active {
+      background: linear-gradient(135deg, var(--ctp-mauve), var(--ctp-blue));
+      border-color: transparent;
+      color: var(--ctp-crust);
+      font-weight: 600;
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--ctp-mauve) 40%, transparent);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       AUDIO PLAYERS GRID
+       ══════════════════════════════════════════════════════════════ */
+
+    .players-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .player-card {
+      background: var(--ctp-mantle);
+      border: 1px solid var(--ctp-surface0);
+      border-radius: 16px;
+      padding: 1.5rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .player-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 16px 16px 0 0;
+    }
+    .player-card.radio::before   { background: linear-gradient(90deg, var(--ctp-peach), var(--ctp-yellow)); }
+    .player-card.podcast::before { background: linear-gradient(90deg, var(--ctp-mauve), var(--ctp-blue)); }
+
+    .player-card:hover {
+      border-color: var(--ctp-surface1);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+
+    .player-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .player-meta { flex: 1; }
+    .player-type {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+      margin-bottom: 0.4rem;
+    }
+    .player-type.radio   { background: color-mix(in srgb, var(--ctp-peach)  20%, transparent); color: var(--ctp-peach); }
+    .player-type.podcast { background: color-mix(in srgb, var(--ctp-mauve) 20%, transparent); color: var(--ctp-mauve); }
+
+    .player-title { font-size: 1rem; font-weight: 600; color: var(--ctp-text); line-height: 1.3; }
+    .player-duration { font-size: 0.75rem; color: var(--ctp-overlay1); margin-top: 0.2rem; }
+
+    /* Custom audio player wrapper */
+    .audio-wrapper { margin-bottom: 1rem; }
+
+    audio {
+      width: 100%;
+      height: 40px;
+      border-radius: 8px;
+      accent-color: var(--ctp-accent);
+      background: var(--ctp-surface0);
+    }
+
+    /* Progress bar style override (webkit) */
+    audio::-webkit-media-controls-panel        { background: var(--ctp-surface0); border-radius: 8px; }
+    audio::-webkit-media-controls-current-time-display,
+    audio::-webkit-media-controls-time-remaining-display { color: var(--ctp-text); }
+
+    /* Custom playback visualiser */
+    .visualiser-bar {
+      height: 3px;
+      background: var(--ctp-surface1);
+      border-radius: 3px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+      position: relative;
+    }
+    .visualiser-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--ctp-mauve), var(--ctp-blue));
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.3s linear;
+    }
+
+    .player-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .unavailable-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--ctp-overlay0);
+      gap: 0.5rem;
+    }
+    .unavailable-state .icon { font-size: 2rem; opacity: 0.5; }
+    .unavailable-state p { font-size: 0.8rem; }
+
+    /* ══════════════════════════════════════════════════════════════
+       EPUB READER
+       ══════════════════════════════════════════════════════════════ */
+
+    .epub-section {
+      background: var(--ctp-mantle);
+      border: 1px solid var(--ctp-surface0);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .epub-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      background: var(--ctp-crust);
+      border-bottom: 1px solid var(--ctp-surface0);
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .epub-title-area {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .epub-icon {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--ctp-peach), var(--ctp-yellow));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+    .epub-title { font-size: 0.9rem; font-weight: 600; }
+    .epub-subtitle { font-size: 0.72rem; color: var(--ctp-subtext0); }
+
+    .epub-nav-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-nav {
+      width: 36px; height: 36px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      border-radius: 8px;
+    }
+    .btn-nav:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+    .chapter-indicator {
+      font-size: 0.75rem;
+      color: var(--ctp-subtext0);
+      font-family: 'JetBrains Mono', monospace;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    /* epub.js reader area */
+    #epub-viewer {
+      width: 100%;
+      height: 640px;
+      background: var(--ctp-base);
+      border: none;
+      display: block;
+    }
+
+    .epub-empty {
+      height: 300px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      color: var(--ctp-overlay0);
+    }
+    .epub-empty .big-icon { font-size: 3.5rem; opacity: 0.4; }
+    .epub-empty p { font-size: 0.85rem; }
+
+    .epub-footer {
+      padding: 0.75rem 1.5rem;
+      background: var(--ctp-crust);
+      border-top: 1px solid var(--ctp-surface0);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       LOADING SKELETON
+       ══════════════════════════════════════════════════════════════ */
+
+    .skeleton {
+      background: linear-gradient(90deg,
+        var(--ctp-surface0) 25%,
+        var(--ctp-surface1) 50%,
+        var(--ctp-surface0) 75%
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 6px;
+    }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       TOAST NOTIFICATIONS
+       ══════════════════════════════════════════════════════════════ */
+
+    .toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    .toast {
+      padding: 0.75rem 1.25rem;
+      background: var(--ctp-surface0);
+      border: 1px solid var(--ctp-surface1);
+      border-left: 4px solid var(--ctp-blue);
+      border-radius: 10px;
+      font-size: 0.82rem;
+      color: var(--ctp-text);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      max-width: 320px;
+      animation: toast-in 0.3s ease, toast-out 0.3s ease 3.7s forwards;
+      pointer-events: all;
+    }
+    .toast.success { border-left-color: var(--ctp-green); }
+    .toast.error   { border-left-color: var(--ctp-red); }
+    @keyframes toast-in  { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes toast-out { from { opacity:1; } to { opacity:0; pointer-events:none; } }
+
+    /* ══════════════════════════════════════════════════════════════
+       RESPONSIVE
+       ══════════════════════════════════════════════════════════════ */
+
+    @media (max-width: 600px) {
+      .site-header { padding: 0.875rem 1rem; }
+      .app-wrapper  { padding: 1rem 0.875rem 3rem; }
+      #epub-viewer  { height: 480px; }
+      .players-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       SCROLLBAR STYLING
+       ══════════════════════════════════════════════════════════════ */
+
+    ::-webkit-scrollbar       { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--ctp-mantle); }
+    ::-webkit-scrollbar-thumb { background: var(--ctp-surface2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--ctp-overlay0); }
+  </style>
+</head>
+<body>
+  <!-- ── Toast container ── -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <div class="app-wrapper">
+
+    <!-- ════════════════════════════════════════════════════════
+         HEADER
+         ════════════════════════════════════════════════════════ -->
+    <header class="site-header" role="banner">
+      <div class="logo-area">
+        <div class="logo-icon" aria-hidden="true">📡</div>
+        <div class="logo-text">
+          <div class="logo-title">My News Station</div>
+          <div class="logo-sub">Self-hosted AI Daily Digest</div>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <label for="themeSelect" class="sr-only" style="position:absolute;clip:rect(0,0,0,0)">Theme</label>
+        <select id="themeSelect" aria-label="Select colour theme" title="Change theme">
+          <option value="mocha"     selected>🌙 Mocha</option>
+          <option value="macchiato">🌆 Macchiato</option>
+          <option value="frappe">   🌤 Frappé</option>
+          <option value="latte">    ☀️ Latte</option>
+        </select>
+
+        <button id="refreshBtn" class="btn" title="Reload media list" aria-label="Refresh media list">
+          🔄 Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Status bar ── -->
+    <div class="status-bar" role="status" aria-live="polite">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Loading media library…</span>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         DATE SELECTOR
+         ════════════════════════════════════════════════════════ -->
+    <section class="section" aria-labelledby="editionLabel">
+      <div class="section-label" id="editionLabel">📅 Select Edition</div>
+      <div class="date-grid" id="dateGrid" role="listbox" aria-label="Available editions">
+        <!-- Date chips injected by JS -->
+        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
+        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
+        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         AUDIO PLAYERS
+         ════════════════════════════════════════════════════════ -->
+    <section class="section players-grid" aria-label="Audio broadcasts">
+
+      <!-- Flash Briefing -->
+      <div class="player-card radio" id="radioCard">
+        <div class="player-header">
+          <div class="player-meta">
+            <span class="player-type radio">📻 Flash Briefing</span>
+            <div class="player-title">Daily Radio Summary</div>
+            <div class="player-duration" id="radioDuration">≤ 30 min · 500–2,000 words</div>
+          </div>
+        </div>
+        <div id="radioContent">
+          <div class="unavailable-state">
+            <div class="icon">🔇</div>
+            <p>Select an edition above to load audio</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Long Podcast -->
+      <div class="player-card podcast" id="podcastCard">
+        <div class="player-header">
+          <div class="player-meta">
+            <span class="player-type podcast">🎧 Full Podcast</span>
+            <div class="player-title">Deep-Dive Digest</div>
+            <div class="player-duration" id="podcastDuration">Conversational long-form audio</div>
+          </div>
+        </div>
+        <div id="podcastContent">
+          <div class="unavailable-state">
+            <div class="icon">🔇</div>
+            <p>Select an edition above to load audio</p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         EPUB READER
+         ════════════════════════════════════════════════════════ -->
+    <section class="epub-section" aria-labelledby="epubHeading">
+      <div class="epub-toolbar">
+        <div class="epub-title-area">
+          <div class="epub-icon" aria-hidden="true">📖</div>
+          <div>
+            <div class="epub-title" id="epubHeading">EPUB Reader</div>
+            <div class="epub-subtitle" id="epubSubtitle">Select an edition to start reading</div>
+          </div>
+        </div>
+        <div class="epub-nav-controls" role="navigation" aria-label="Chapter navigation">
+          <button id="prevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous chapter">‹</button>
+          <span   class="chapter-indicator" id="chapterIndicator" aria-live="polite">—</span>
+          <button id="nextChapter" class="btn btn-nav" disabled title="Next chapter" aria-label="Next chapter">›</button>
+        </div>
+      </div>
+
+      <!-- epub.js renders into this element -->
+      <div id="epub-viewer" role="document" aria-label="EPUB book viewer">
+        <div class="epub-empty">
+          <div class="big-icon" aria-hidden="true">📰</div>
+          <p>Your daily newspaper will appear here</p>
+          <p style="font-size:0.75rem;color:var(--ctp-overlay0)">
+            Select an edition date above, then the EPUB will load automatically
+          </p>
+        </div>
+      </div>
+
+      <div class="epub-footer">
+        <span id="epubPageInfo" style="font-size:0.78rem;color:var(--ctp-subtext0)">—</span>
+        <a id="epubDownloadBtn"
+           class="btn btn-download"
+           href="#"
+           download
+           style="display:none"
+           aria-label="Download EPUB file">
+          ⬇ Download EPUB
+        </a>
+      </div>
+    </section>
+
+  </div><!-- /.app-wrapper -->
+
+  <!-- ════════════════════════════════════════════════════════════
+       JAVASCRIPT APPLICATION
+       ════════════════════════════════════════════════════════════ -->
+  <script>
+  (() => {
+    'use strict';
+
+    // ── State ──────────────────────────────────────────────────
+    let mediaData    = [];   // raw /api/media response
+    let activeDate   = null; // currently selected date string (YYYYMMDD)
+    let epubBook     = null; // epub.js Book instance
+    let epubRendition = null;
+    let currentChapterIndex = 0;
+    let totalChapters = 0;
+
+    // ── DOM refs ───────────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+    const themeSelect      = $('themeSelect');
+    const refreshBtn       = $('refreshBtn');
+    const statusDot        = $('statusDot');
+    const statusText       = $('statusText');
+    const dateGrid         = $('dateGrid');
+    const radioContent     = $('radioContent');
+    const podcastContent   = $('podcastContent');
+    const epubViewer       = $('epub-viewer');
+    const epubSubtitle     = $('epubSubtitle');
+    const epubPageInfo     = $('epubPageInfo');
+    const epubDownloadBtn  = $('epubDownloadBtn');
+    const prevChapterBtn   = $('prevChapter');
+    const nextChapterBtn   = $('nextChapter');
+    const chapterIndicator = $('chapterIndicator');
+
+    // ── Theme ──────────────────────────────────────────────────
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('ctp-theme', theme);
+      themeSelect.value = theme;
+    }
+
+    themeSelect.addEventListener('change', () => applyTheme(themeSelect.value));
+
+    // Restore persisted theme, default = mocha
+    applyTheme(localStorage.getItem('ctp-theme') || 'mocha');
+
+    // ── Toast ──────────────────────────────────────────────────
+    function toast(message, type = '') {
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      el.textContent = message;
+      $('toastContainer').appendChild(el);
+      setTimeout(() => el.remove(), 4200);
+    }
+
+    // ── Status helpers ─────────────────────────────────────────
+    function setStatus(msg, state = '') {
+      statusText.textContent = msg;
+      statusDot.className = `status-dot ${state}`;
+    }
+
+    // ── Format YYYYMMDD → human readable ──────────────────────
+    function formatDate(dateStr) {
+      if (!dateStr || dateStr.length !== 8) return dateStr;
+      const y = dateStr.slice(0, 4);
+      const m = dateStr.slice(4, 6);
+      const d = dateStr.slice(6, 8);
+      const dt = new Date(`${y}-${m}-${d}`);
+      return dt.toLocaleDateString('en-GB', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
+    }
+
+    // ── Fetch media list from Rust server ─────────────────────
+    async function loadMediaList() {
+      setStatus('Fetching media library…', 'loading');
+      refreshBtn.disabled = true;
+      dateGrid.innerHTML = `
+        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
+        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
+        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
+      `;
+
+      try {
+        const resp = await fetch('/api/media');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        mediaData = data.dates || [];
+
+        if (mediaData.length === 0) {
+          setStatus('No media found. Run the scraper to generate content.', 'error');
+          dateGrid.innerHTML = '<span style="color:var(--ctp-overlay1);font-size:0.82rem">No editions available yet</span>';
+          return;
+        }
+
+        renderDateChips();
+        setStatus(`${mediaData.length} edition(s) available`, 'active');
+
+        // Auto-select the most recent date
+        selectDate(mediaData[0].date);
+
+      } catch (err) {
+        setStatus(`Error loading media: ${err.message}`, 'error');
+        dateGrid.innerHTML = '<span style="color:var(--ctp-red);font-size:0.82rem">⚠ Could not load media list</span>';
+        toast(`Failed to load media: ${err.message}`, 'error');
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    }
+
+    // ── Render date selection chips ────────────────────────────
+    function renderDateChips() {
+      dateGrid.innerHTML = '';
+      mediaData.forEach(entry => {
+        const chip = document.createElement('button');
+        chip.className = `date-chip${entry.date === activeDate ? ' active' : ''}`;
+        chip.setAttribute('role', 'option');
+        chip.setAttribute('aria-selected', entry.date === activeDate);
+        chip.setAttribute('data-date', entry.date);
+        chip.textContent = formatDate(entry.date);
+        chip.title = `Edition: ${entry.date}`;
+        chip.addEventListener('click', () => selectDate(entry.date));
+        dateGrid.appendChild(chip);
+      });
+    }
+
+    // ── Select a date and render all media for it ──────────────
+    function selectDate(dateStr) {
+      activeDate = dateStr;
+
+      // Update chip states
+      document.querySelectorAll('.date-chip').forEach(chip => {
+        const isActive = chip.dataset.date === dateStr;
+        chip.classList.toggle('active', isActive);
+        chip.setAttribute('aria-selected', isActive);
+      });
+
+      const entry = mediaData.find(e => e.date === dateStr);
+      if (!entry) return;
+
+      renderAudioPlayer('radio',   entry.radio,   dateStr);
+      renderAudioPlayer('podcast', entry.podcast, dateStr);
+      loadEpub(entry.epub, dateStr);
+    }
+
+    // ── Render an audio player card ────────────────────────────
+    function renderAudioPlayer(type, filename, dateStr) {
+      const contentEl = type === 'radio' ? radioContent : podcastContent;
+      const label     = type === 'radio' ? 'Flash Briefing' : 'Full Podcast';
+
+      if (!filename) {
+        contentEl.innerHTML = `
+          <div class="unavailable-state">
+            <div class="icon">🔇</div>
+            <p>${label} not available for ${formatDate(dateStr)}</p>
+            <p style="font-size:0.72rem;color:var(--ctp-overlay0)">Run the scraper to generate audio</p>
+          </div>`;
+        return;
+      }
+
+      const mediaUrl = `/media/${encodeURIComponent(filename)}`;
+      const audioId  = `audio-${type}`;
+      const fillId   = `fill-${type}`;
+
+      contentEl.innerHTML = `
+        <div class="audio-wrapper">
+          <audio id="${audioId}"
+                 controls
+                 preload="metadata"
+                 aria-label="${label} audio player">
+            <source src="${mediaUrl}" type="audio/mpeg" />
+            Your browser does not support the audio element.
+          </audio>
+          <div class="visualiser-bar">
+            <div class="visualiser-fill" id="${fillId}"></div>
+          </div>
+        </div>
+        <div class="player-actions">
+          <a href="${mediaUrl}"
+             download="${filename}"
+             class="btn btn-download"
+             aria-label="Download ${label} MP3">
+            ⬇ Download MP3
+          </a>
+        </div>
+      `;
+
+      // Wire up progress fill bar
+      const audio = $(audioId);
+      const fill  = $(fillId);
+      if (audio && fill) {
+        audio.addEventListener('timeupdate', () => {
+          if (audio.duration) {
+            fill.style.width = `${(audio.currentTime / audio.duration) * 100}%`;
+          }
+        });
+        audio.addEventListener('ended', () => { fill.style.width = '0%'; });
+      }
+    }
+
+    // ── EPUB.js loader ─────────────────────────────────────────
+    async function loadEpub(filename, dateStr) {
+      // Tear down previous book
+      if (epubBook) {
+        try { await epubBook.destroy(); } catch (_) {}
+        epubBook = null;
+        epubRendition = null;
+      }
+      prevChapterBtn.disabled = true;
+      nextChapterBtn.disabled = true;
+      chapterIndicator.textContent = '—';
+      epubPageInfo.textContent = '—';
+
+      if (!filename) {
+        epubViewer.innerHTML = `
+          <div class="epub-empty">
+            <div class="big-icon">📄</div>
+            <p>EPUB not available for ${formatDate(dateStr)}</p>
+            <p style="font-size:0.75rem;color:var(--ctp-overlay0)">Run the scraper to generate the book</p>
+          </div>`;
+        epubSubtitle.textContent = 'No book for this edition';
+        epubDownloadBtn.style.display = 'none';
+        return;
+      }
+
+      const epubUrl = `/media/${encodeURIComponent(filename)}`;
+
+      epubSubtitle.textContent = `Loading ${formatDate(dateStr)} edition…`;
+      epubViewer.innerHTML = `<div class="epub-empty"><div class="big-icon skeleton" style="width:80px;height:80px;border-radius:50%;background:var(--ctp-surface0)"></div><p style="margin-top:1rem">Loading book…</p></div>`;
+
+      try {
+        epubBook = ePub(epubUrl);
+        epubViewer.innerHTML = ''; // Clear placeholder before rendering
+
+        epubRendition = epubBook.renderTo('epub-viewer', {
+          width: '100%',
+          height: 640,
+          flow: 'scrolled-doc',
+          manager: 'default',
+        });
+
+        await epubRendition.display();
+
+        // Apply Catppuccin-matched styles inside the iframe
+        injectEpubStyles();
+
+        // Load spine for chapter navigation
+        await epubBook.ready;
+        const spine = epubBook.spine;
+        totalChapters = spine.length;
+        currentChapterIndex = 0;
+
+        updateChapterUI();
+        prevChapterBtn.disabled = false;
+        nextChapterBtn.disabled = totalChapters <= 1;
+
+        epubSubtitle.textContent = `${formatDate(dateStr)} · ${totalChapters} chapters`;
+        epubPageInfo.textContent = `Chapter 1 of ${totalChapters}`;
+
+        // Download link
+        epubDownloadBtn.href = epubUrl;
+        epubDownloadBtn.download = filename;
+        epubDownloadBtn.style.display = 'inline-flex';
+
+        // Hook into rendition relocations to track chapter
+        epubRendition.on('relocated', location => {
+          const spineItem = location.start && location.start.index;
+          if (typeof spineItem === 'number') {
+            currentChapterIndex = spineItem;
+            updateChapterUI();
+            epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+          }
+        });
+
+        toast(`Loaded ${formatDate(dateStr)} edition`, 'success');
+
+      } catch (err) {
+        console.error('EPUB load error:', err);
+        epubViewer.innerHTML = `
+          <div class="epub-empty">
+            <div class="big-icon">⚠️</div>
+            <p>Failed to load EPUB</p>
+            <p style="font-size:0.75rem;color:var(--ctp-overlay0)">${err.message}</p>
+          </div>`;
+        epubSubtitle.textContent = 'Error loading book';
+        toast(`EPUB error: ${err.message}`, 'error');
+      }
+    }
+
+    // ── Apply CSS into the epub.js iframe ─────────────────────
+    function injectEpubStyles() {
+      if (!epubRendition) return;
+      const theme = document.documentElement.getAttribute('data-theme') || 'mocha';
+      const isDark = ['mocha','macchiato','frappe'].includes(theme);
+
+      epubRendition.themes.register('ctp', {
+        body: {
+          'font-family': "'Georgia', serif",
+          'line-height': '1.8',
+          'padding': '1.5em 2em',
+          'color':      isDark ? '#cdd6f4' : '#4c4f69',
+          'background': isDark ? '#1e1e2e' : '#eff1f5',
+          'font-size':  '16px',
+        },
+        h1: { 'color': isDark ? '#cba6f7' : '#8839ef', 'border-bottom': '2px solid currentColor' },
+        h2: { 'color': isDark ? '#89b4fa' : '#1e66f5', 'margin-top': '2em' },
+        a:  { 'color': isDark ? '#74c7ec' : '#209fb5' },
+        p:  { 'text-align': 'justify', 'margin': '0.75em 0' },
+      });
+      epubRendition.themes.select('ctp');
+    }
+
+    // ── Chapter navigation helpers ─────────────────────────────
+    function updateChapterUI() {
+      prevChapterBtn.disabled = currentChapterIndex <= 0;
+      nextChapterBtn.disabled = currentChapterIndex >= totalChapters - 1;
+      chapterIndicator.textContent = `${currentChapterIndex + 1} / ${totalChapters}`;
+    }
+
+    prevChapterBtn.addEventListener('click', async () => {
+      if (!epubRendition || currentChapterIndex <= 0) return;
+      await epubRendition.prev();
+      currentChapterIndex = Math.max(0, currentChapterIndex - 1);
+      updateChapterUI();
+      epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+    });
+
+    nextChapterBtn.addEventListener('click', async () => {
+      if (!epubRendition || currentChapterIndex >= totalChapters - 1) return;
+      await epubRendition.next();
+      currentChapterIndex = Math.min(totalChapters - 1, currentChapterIndex + 1);
+      updateChapterUI();
+      epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+    });
+
+    // Re-inject EPUB styles when theme changes
+    themeSelect.addEventListener('change', () => {
+      setTimeout(injectEpubStyles, 50); // wait for CSS vars to propagate
+    });
+
+    // ── Keyboard navigation for EPUB ──────────────────────────
+    document.addEventListener('keydown', e => {
+      if (!epubRendition) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'ArrowLeft')  prevChapterBtn.click();
+      if (e.key === 'ArrowRight') nextChapterBtn.click();
+    });
+
+    // ── Refresh button ─────────────────────────────────────────
+    refreshBtn.addEventListener('click', loadMediaList);
+
+    // ── Bootstrap ─────────────────────────────────────────────
+    loadMediaList();
+
+  })();
+  </script>
+</body>
+</html>
