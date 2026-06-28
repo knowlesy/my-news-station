@@ -307,6 +307,7 @@ def scrape_rss(feed: dict) -> list[dict]:
             ).get_text(strip=True)[:500],
             "content": "",
             "author":  "",
+            "images":  [],
             "audio_highlight": False,
         })
 
@@ -375,6 +376,7 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
             "summary":         "",
             "content":         "",
             "author":          "",
+            "images":          [],
             "audio_highlight": False,
         })
 
@@ -424,6 +426,38 @@ def format_text_to_html(text: str) -> str:
     if not text:
         return "<p>(No content available)</p>"
 
+def extract_images(html: str) -> list[str]:
+    """Extract up to 3 prominent image URLs from the HTML content."""
+    if not html:
+        return []
+    images = []
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for img in soup.find_all("img", src=True):
+            src = img["src"]
+            if not src.startswith("http"):
+                continue
+            # Skip tracking pixels, avatars, or relative icons
+            if any(k in src.lower() for k in ["avatar", "logo", "icon", "profile", "tracker", "pixel", "ad", "spacer"]):
+                continue
+            if src in images:
+                continue
+            images.append(src)
+            if len(images) >= 3:
+                break
+    except Exception:
+        pass
+    return images
+
+
+def format_text_to_html(text: str) -> str:
+    """
+    Format plain text/markdown into well-formed XHTML.
+    Protects code blocks fenced with ``` and escapes special characters to prevent parser errors.
+    """
+    if not text:
+        return "<p>(No content available)</p>"
+
     import html
     
     # Split by fenced code blocks
@@ -444,15 +478,20 @@ def format_text_to_html(text: str) -> str:
             escaped_code = html.escape(code_content.strip())
             html_blocks.append(f"<pre><code>{escaped_code}</code></pre>")
         else:
-            # Regular text paragraphs
-            paragraphs = [p.strip() for p in part.split("\n\n") if p.strip()]
+            # Regular text paragraphs — split on single newlines to avoid wall of text
+            paragraphs = [p.strip() for p in part.split("\n") if p.strip()]
             for para in paragraphs:
                 escaped_para = html.escape(para)
-                # Apply inline styles
-                escaped_para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped_para)
-                escaped_para = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", escaped_para)
-                escaped_para = re.sub(r"`(.+?)`", r"<code>\1</code>", escaped_para)
-                html_blocks.append(f"<p>{escaped_para}</p>")
+                if escaped_para.startswith("## "):
+                    html_blocks.append(f"<h3>{escaped_para[3:]}</h3>")
+                elif escaped_para.startswith("# "):
+                    html_blocks.append(f"<h2>{escaped_para[2:]}</h2>")
+                else:
+                    # Apply inline styles
+                    escaped_para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped_para)
+                    escaped_para = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", escaped_para)
+                    escaped_para = re.sub(r"`(.+?)`", r"<code>\1</code>", escaped_para)
+                    html_blocks.append(f"<p>{escaped_para}</p>")
                 
     return "\n".join(html_blocks)
 
@@ -493,6 +532,7 @@ async def extract_article_content(context, article: dict) -> dict:
             )
         article["content"] = extracted or article.get("summary", f"[Content unavailable: {url}]")
         article["author"] = extract_author(html)
+        article["images"] = extract_images(html)
     else:
         article["content"] = article.get("summary", f"[Failed to fetch: {url}]")
 
@@ -565,18 +605,23 @@ You are an advanced news editing and broadcasting engine. You are provided with 
 - <short_radio>: Focus ONLY on the marked audio highlights and top stories. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
   CRITICAL TIME CONSTRAINT: This script MUST be crisp and tightly edited. It must absolutely NOT exceed a 30-minute reading time under any circumstances. Target a high-density delivery between 500 to 2,000 words total.
   Structure: Continuous text script. Group stories by source and introduce them naturally (e.g., 'The following is reported by BBC News:' or 'From BBC News, first we have...') instead of repeating '[Source] reported that' for each individual story. Keep the narration flowing, conversational, and natural. NO markdown formatting, asterisks, or bolding. Translate code/terminal commands into conceptual, easy-to-understand audio explanations.
+  Always use time-neutral greetings (e.g., 'Hello', 'Welcome', 'This is your daily briefing') rather than 'Good morning' or 'Good evening'.
 
-- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. Group stories by source and introduce them naturally instead of repeating '[Source] reported that' repeatedly. NO speaker tags or audio cues. Pure text prose optimized for TTS.\
+- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. Group stories by source and introduce them naturally instead of repeating '[Source] reported that' repeatedly. NO speaker tags or audio cues. Pure text prose optimized for TTS.
+  Always use time-neutral greetings (e.g., 'Hello', 'Welcome', 'This is your daily podcast briefing') rather than 'Good morning' or 'Good evening'.
 """
 
 
 def build_prompt(all_articles: list[dict]) -> str:
-    """Assemble the single mega-prompt with the full article pool."""
-    highlights = [a for a in all_articles if a.get("audio_highlight")]
+    """Assemble the single mega-prompt with the filtered article pool."""
+    short_sources_list = [s.strip().lower() for s in os.getenv("SHORT_SOURCES", "BBC News").split(",") if s.strip()]
+    long_sources_list = [s.strip().lower() for s in os.getenv("LONG_SOURCES", "BBC News,Medium/terraform").split(",") if s.strip()]
 
-    highlight_summary = "\n".join(
-        f"  • [{a['source']}] {a['title']}" for a in highlights
-    ) or "  (none flagged)"
+    short_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in short_sources_list]
+    long_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in long_sources_list]
+
+    short_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in short_highlights) or "  (none flagged)"
+    long_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in long_highlights) or "  (none flagged)"
 
     pool_sections = []
     for i, a in enumerate(all_articles, 1):
@@ -591,9 +636,12 @@ def build_prompt(all_articles: list[dict]) -> str:
 
     return "\n\n".join([
         SYSTEM_PROMPT,
-        f"── CURATED AUDIO HIGHLIGHTS ({len(highlights)} articles) ──",
-        highlight_summary,
-        f"── FULL DAILY POOL ({len(all_articles)} articles) ──",
+        f"── CRITICAL CONTENT FILTER RULES ──\n"
+        f"- For <short_radio>: You must ONLY cover the following curated stories (from {os.getenv('SHORT_SOURCES', 'BBC News')}):\n"
+        f"{short_summary}\n\n"
+        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {os.getenv('LONG_SOURCES', 'BBC News,Medium/terraform')}):\n"
+        f"{long_summary}\n",
+        f"── FULL DAILY POOL (FOR DETAILS) ──",
         "\n\n".join(pool_sections),
     ])
 
@@ -696,6 +744,11 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
         author_suffix = f" · By {author_name}" if author_name else ""
         source_tag = f'<div class="source-tag">Source: {source_name}{author_suffix}</div>'
 
+        # Render images if present
+        image_html = ""
+        for img_url in article.get("images", []):
+            image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{img_url}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
+
         chapter = epub.EpubHtml(
             title=chapter_title,
             file_name=f"text/chap_{idx:03d}.xhtml",
@@ -710,6 +763,7 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
             f'<body>'
             f'  {source_tag}'
             f'  <h2>{chapter_title}</h2>'
+            f'  {image_html}'
             f'  {body_html}'
             f'</body>'
             f'</html>'

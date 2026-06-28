@@ -78,7 +78,7 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
     // BTreeMap ensures dates are iterated in lexicographic (chronological) order.
     let mut groups: BTreeMap<String, MediaEntry> = BTreeMap::new();
 
-    let date_re = Regex::new(r"(\d{8})").expect("Invalid date regex");
+    let date_re = Regex::new(r"(\d{8}-\d{6}|\d{8})").expect("Invalid date regex");
 
     let read_dir = match std::fs::read_dir(data_dir) {
         Ok(rd) => rd,
@@ -150,9 +150,20 @@ async fn handle_scrape_status(
     })
 }
 
+use axum::extract::Query;
+
+#[derive(Deserialize)]
+struct TriggerParams {
+    voice_short: Option<String>,
+    voice_long: Option<String>,
+    short_sources: Option<String>,
+    long_sources: Option<String>,
+}
+
 /// `POST /api/scrape/trigger` — spawns the Python scraper script in the background.
 async fn handle_scrape_trigger(
     State(state): State<AppState>,
+    Query(params): Query<TriggerParams>,
 ) -> Result<Json<ScrapeStatus>, StatusCode> {
     let was_running = state.is_scraping.swap(true, Ordering::SeqCst);
     if was_running {
@@ -168,6 +179,20 @@ async fn handle_scrape_trigger(
         
         let mut cmd = tokio::process::Command::new(&python_bin);
         cmd.arg(&scraper_script);
+        
+        // Pass query parameters to child process environment
+        if let Some(vs) = params.voice_short {
+            cmd.env("VOICE_SHORT", vs);
+        }
+        if let Some(vl) = params.voice_long {
+            cmd.env("VOICE_LONG", vl);
+        }
+        if let Some(ss) = params.short_sources {
+            cmd.env("SHORT_SOURCES", ss);
+        }
+        if let Some(ls) = params.long_sources {
+            cmd.env("LONG_SOURCES", ls);
+        }
         
         match cmd.spawn() {
             Ok(mut child) => {

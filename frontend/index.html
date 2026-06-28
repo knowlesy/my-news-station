@@ -707,6 +707,68 @@
       </div>
     </div>
 
+    <!-- ── Pipeline & Voice Configuration Panel ── -->
+    <section class="section" id="settingsPanel" style="margin-bottom: 1.5rem;">
+      <div class="player-card" style="padding: 1.25rem; background: var(--ctp-mantle); border: 1px solid var(--ctp-surface0);">
+        <div style="font-weight:600; color:var(--ctp-text); margin-bottom: 1rem; display:flex; align-items:center; gap:0.5rem; font-size: 0.9rem;">
+          <span>⚙️ Pipeline & Voice Configuration</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem;">
+          
+          <!-- Voice Settings -->
+          <div>
+            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">📻 SHORT BRIEFING VOICE</div>
+            <select id="voiceShortSelect" style="width:100%; height: 36px; padding: 0.4rem 0.75rem;">
+              <option value="en-GB-SoniaNeural" selected>🇬🇧 Sonia (Female)</option>
+              <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
+              <option value="en-GB-LibbyNeural">🇬🇧 Libby (Female)</option>
+              <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
+              <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
+              <option value="en-AU-NatashaNeural">🇦🇺 Natasha (Female)</option>
+            </select>
+          </div>
+          
+          <div>
+            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">🎧 LONG PODCAST VOICE</div>
+            <select id="voiceLongSelect" style="width:100%; height: 36px; padding: 0.4rem 0.75rem;">
+              <option value="en-US-GuyNeural" selected>🇺🇸 Guy (Male)</option>
+              <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
+              <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
+              <option value="en-US-BrianNeural">🇺🇸 Brian (Male)</option>
+              <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
+              <option value="en-AU-WilliamNeural">🇦🇺 William (Male)</option>
+            </select>
+          </div>
+
+          <!-- Source curation settings -->
+          <div>
+            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.5rem; font-weight:600; letter-spacing: 0.05em;">📻 BRIEFING SOURCES</div>
+            <div style="display:flex; flex-direction:column; gap:0.45rem; font-size:0.8rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
+                <input type="checkbox" id="srcShortBbc" checked style="cursor:pointer; width:15px; height:15px;"> BBC News
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
+                <input type="checkbox" id="srcShortMedium" style="cursor:pointer; width:15px; height:15px;"> Medium/terraform
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.5rem; font-weight:600; letter-spacing: 0.05em;">🎧 PODCAST SOURCES</div>
+            <div style="display:flex; flex-direction:column; gap:0.45rem; font-size:0.8rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
+                <input type="checkbox" id="srcLongBbc" checked style="cursor:pointer; width:15px; height:15px;"> BBC News
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
+                <input type="checkbox" id="srcLongMedium" checked style="cursor:pointer; width:15px; height:15px;"> Medium/terraform
+              </label>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
     <!-- ════════════════════════════════════════════════════════
          AUDIO PLAYERS & LIBRARY PLAYLIST
          ════════════════════════════════════════════════════════ -->
@@ -844,6 +906,12 @@
     const nextChapterBtn   = $('nextChapter');
     const chapterIndicator = $('chapterIndicator');
     const playlistSubtitle = $('playlistSubtitle');
+    const voiceShortSelect = $('voiceShortSelect');
+    const voiceLongSelect  = $('voiceLongSelect');
+    const srcShortBbc      = $('srcShortBbc');
+    const srcShortMedium   = $('srcShortMedium');
+    const srcLongBbc       = $('srcLongBbc');
+    const srcLongMedium    = $('srcLongMedium');
 
     let scrapePollingInterval = null;
     let isScrapingActive = false;
@@ -859,6 +927,31 @@
 
     // Restore persisted theme, default = mocha
     applyTheme(localStorage.getItem('ctp-theme') || 'mocha');
+
+    // ── Pipeline Settings Persistence ──────────────────────────
+    function loadSettings() {
+      voiceShortSelect.value = localStorage.getItem('voice_short') || 'en-GB-SoniaNeural';
+      voiceLongSelect.value  = localStorage.getItem('voice_long')  || 'en-US-GuyNeural';
+      srcShortBbc.checked    = localStorage.getItem('src_short_bbc') !== 'false';
+      srcShortMedium.checked = localStorage.getItem('src_short_medium') === 'true';
+      srcLongBbc.checked     = localStorage.getItem('src_long_bbc') !== 'false';
+      srcLongMedium.checked  = localStorage.getItem('src_long_medium') !== 'false';
+    }
+
+    function saveSettings() {
+      localStorage.setItem('voice_short', voiceShortSelect.value);
+      localStorage.setItem('voice_long', voiceLongSelect.value);
+      localStorage.setItem('src_short_bbc', srcShortBbc.checked);
+      localStorage.setItem('src_short_medium', srcShortMedium.checked);
+      localStorage.setItem('src_long_bbc', srcLongBbc.checked);
+      localStorage.setItem('src_long_medium', srcLongMedium.checked);
+    }
+
+    [voiceShortSelect, voiceLongSelect, srcShortBbc, srcShortMedium, srcLongBbc, srcLongMedium].forEach(el => {
+      el.addEventListener('change', saveSettings);
+    });
+
+    loadSettings();
 
     // ── Toast ──────────────────────────────────────────────────
     function toast(message, type = '') {
@@ -896,6 +989,27 @@
         return dt.toLocaleDateString('en-GB', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
       }
       return dateStr;
+    }
+
+    // ── Check if edition is new (<12h old & not clicked) ────────
+    function isNewEdition(dateStr) {
+      if (!dateStr || dateStr.length !== 15) return false;
+      
+      const clicked = JSON.parse(localStorage.getItem('clickedEditions') || '[]');
+      if (clicked.includes(dateStr)) return false;
+
+      try {
+        const y = dateStr.slice(0, 4);
+        const m = dateStr.slice(4, 6);
+        const d = dateStr.slice(6, 8);
+        const hh = dateStr.slice(9, 11);
+        const mm = dateStr.slice(11, 13);
+        const dt = new Date(`${y}-${m}-${d}T${hh}:${mm}:00`);
+        const ageHours = (new Date() - dt) / (1000 * 60 * 60);
+        return ageHours >= 0 && ageHours < 12;
+      } catch (e) {
+        return false;
+      }
     }
 
     // ── Fetch media list from Rust server ─────────────────────
@@ -955,6 +1069,9 @@
 
         // Build content badges
         let badgesHtml = '';
+        if (isNewEdition(entry.date)) {
+          badgesHtml += '<span class="badge" style="background:var(--ctp-green); color:var(--ctp-crust); font-weight:600; animation: pulse-dot 1.5s infinite;">✨ New</span>';
+        }
         if (entry.epub) badgesHtml += '<span class="badge">📖 Book</span>';
         if (entry.radio) badgesHtml += '<span class="badge">📻 Radio</span>';
         if (entry.podcast) badgesHtml += '<span class="badge">🎧 Podcast</span>';
@@ -984,6 +1101,15 @@
         item.classList.toggle('active', isActive);
         item.setAttribute('aria-selected', isActive);
       });
+
+      // Mark as clicked/viewed in local storage to clear the New badge
+      const clicked = JSON.parse(localStorage.getItem('clickedEditions') || '[]');
+      if (!clicked.includes(dateStr)) {
+        clicked.push(dateStr);
+        localStorage.setItem('clickedEditions', JSON.stringify(clicked));
+        // Re-render playlist to clear badge
+        renderPlaylist();
+      }
 
       playlistSubtitle.textContent = `Active: ${formatDate(dateStr)}`;
 
@@ -1205,9 +1331,32 @@
     async function triggerScraper() {
       if (isScrapingActive) return;
       
+      saveSettings();
+
+      // Build source list filters
+      const shortSources = [];
+      if (srcShortBbc.checked) shortSources.push("BBC News");
+      if (srcShortMedium.checked) shortSources.push("Medium/terraform");
+
+      const longSources = [];
+      if (srcLongBbc.checked) longSources.push("BBC News");
+      if (srcLongMedium.checked) longSources.push("Medium/terraform");
+
+      if (shortSources.length === 0 && longSources.length === 0) {
+        toast('Select at least one source for short briefing or long podcast.', 'error');
+        return;
+      }
+
+      const qParams = new URLSearchParams({
+        voice_short: voiceShortSelect.value,
+        voice_long: voiceLongSelect.value,
+        short_sources: shortSources.join(','),
+        long_sources: longSources.join(',')
+      });
+
       try {
         scrapeBtn.disabled = true;
-        const resp = await fetch('/api/scrape/trigger', { method: 'POST' });
+        const resp = await fetch(`/api/scrape/trigger?${qParams.toString()}`, { method: 'POST' });
         if (resp.status === 409) {
           toast('Scraper pipeline is already running.', 'error');
           return;
