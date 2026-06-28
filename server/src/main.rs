@@ -13,9 +13,10 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::Json,
-    routing::get,
+    routing::{get, post},
     Router,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,7 @@ use tracing::{error, info, warn};
 #[derive(Clone)]
 struct AppState {
     data_dir: Arc<PathBuf>,
+    is_scraping: Arc<AtomicBool>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -134,6 +136,61 @@ async fn handle_list_media(
     Ok(Json(MediaListResponse { dates }))
 }
 
+#[derive(Serialize)]
+struct ScrapeStatus {
+    running: bool,
+}
+
+/// `GET /api/scrape/status` — returns whether the scraper is currently running.
+async fn handle_scrape_status(
+    State(state): State<AppState>,
+) -> Json<ScrapeStatus> {
+    Json(ScrapeStatus {
+        running: state.is_scraping.load(Ordering::Relaxed),
+    })
+}
+
+/// `POST /api/scrape/trigger` — spawns the Python scraper script in the background.
+async fn handle_scrape_trigger(
+    State(state): State<AppState>,
+) -> Result<Json<ScrapeStatus>, StatusCode> {
+    let was_running = state.is_scraping.swap(true, Ordering::SeqCst);
+    if was_running {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
+    let scraper_script = std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
+
+    let is_scraping = Arc::clone(&state.is_scraping);
+    tokio::spawn(async move {
+        info!("Spawning background scraper process: {} {}", python_bin, scraper_script);
+        
+        let mut cmd = tokio::process::Command::new(&python_bin);
+        cmd.arg(&scraper_script);
+        
+        match cmd.spawn() {
+            Ok(mut child) => {
+                match child.wait().await {
+                    Ok(status) => {
+                        info!("Background scraper completed with status: {:?}", status);
+                    }
+                    Err(e) => {
+                        error!("Failed to wait for background scraper process: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to spawn background scraper process ({} {}): {}", python_bin, scraper_script, e);
+            }
+        }
+        
+        is_scraping.store(false, Ordering::SeqCst);
+    });
+
+    Ok(Json(ScrapeStatus { running: true }))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // BACKGROUND CLEANUP TASK
 // ═══════════════════════════════════════════════════════════════════
@@ -228,11 +285,14 @@ async fn main() {
     // ── Build the application router ──────────────────────────────
     let state = AppState {
         data_dir: Arc::clone(&data_dir),
+        is_scraping: Arc::new(AtomicBool::new(false)),
     };
 
     let app = Router::new()
         // JSON API for the frontend to discover media files
         .route("/api/media", get(handle_list_media))
+        .route("/api/scrape/status", get(handle_scrape_status))
+        .route("/api/scrape/trigger", post(handle_scrape_trigger))
         // Serve generated media (EPUB + MP3) under /media/
         .nest_service("/media", ServeDir::new(&*data_dir))
         // Serve the single-page frontend for all other routes

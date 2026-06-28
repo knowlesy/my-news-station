@@ -250,6 +250,74 @@
       50%       { opacity: 0.3; }
     }
 
+    /* Scrape progress bar pulsing animation */
+    @keyframes pulse-bar {
+      0%   { opacity: 0.45; }
+      50%  { opacity: 1.0; }
+      100% { opacity: 0.45; }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       PLAYLIST SYSTEM
+       ══════════════════════════════════════════════════════════════ */
+
+    .playlist-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid var(--ctp-surface0);
+      border-radius: 10px;
+      background: var(--ctp-surface0);
+      color: var(--ctp-subtext1);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.82rem;
+      font-family: inherit;
+      text-align: left;
+      width: 100%;
+      outline: none;
+    }
+    .playlist-item:hover {
+      background: var(--ctp-surface1);
+      color: var(--ctp-text);
+      border-color: var(--ctp-surface2);
+    }
+    .playlist-item.active {
+      background: linear-gradient(135deg, var(--ctp-mauve), var(--ctp-blue));
+      color: var(--ctp-crust);
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .playlist-item-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .playlist-item-date {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+    }
+    .playlist-item-badges {
+      display: flex;
+      gap: 0.3rem;
+      font-size: 0.62rem;
+      opacity: 0.8;
+    }
+    .playlist-item.active .playlist-item-badges {
+      opacity: 1;
+    }
+    .badge {
+      padding: 0.02rem 0.3rem;
+      border-radius: 4px;
+      background: var(--ctp-surface2);
+      color: var(--ctp-text);
+    }
+    .playlist-item.active .badge {
+      background: rgba(0,0,0,0.15);
+      color: var(--ctp-crust);
+    }
+
     /* ══════════════════════════════════════════════════════════════
        DATE SELECTOR SECTION
        ══════════════════════════════════════════════════════════════ */
@@ -613,6 +681,10 @@
         <button id="refreshBtn" class="btn" title="Reload media list" aria-label="Refresh media list">
           🔄 Refresh
         </button>
+
+        <button id="scrapeBtn" class="btn btn-primary" title="Trigger manual news scrape" aria-label="Trigger manual news scrape">
+          ⚡ Run Scraper
+        </button>
       </div>
     </header>
 
@@ -622,23 +694,38 @@
       <span id="statusText">Loading media library…</span>
     </div>
 
-    <!-- ════════════════════════════════════════════════════════
-         DATE SELECTOR
-         ════════════════════════════════════════════════════════ -->
-    <section class="section" aria-labelledby="editionLabel">
-      <div class="section-label" id="editionLabel">📅 Select Edition</div>
-      <div class="date-grid" id="dateGrid" role="listbox" aria-label="Available editions">
-        <!-- Date chips injected by JS -->
-        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
-        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
-        <div class="skeleton" style="height:32px;width:100px;border-radius:20px;"></div>
+    <!-- ── Active Scraper Progress Bar ── -->
+    <div id="scrapeProgressBar" style="display:none; margin-bottom:1.5rem; background:var(--ctp-mantle); border:1px solid var(--ctp-surface0); padding:1rem; border-radius:12px;" aria-live="assertive">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; font-size:0.8rem; color:var(--ctp-subtext0);">
+        <span style="font-weight: 500;">⚙️ Scraper pipeline is running...</span>
+        <span style="font-size:0.75rem; color:var(--ctp-yellow);">Processing (may take 2-3 mins)</span>
       </div>
-    </section>
+      <div class="visualiser-bar" style="height:6px; background:var(--ctp-surface0); margin: 0; overflow: hidden;">
+        <div class="visualiser-fill" style="width: 100%; height: 100%; animation: pulse-bar 1.5s infinite; background: linear-gradient(90deg, var(--ctp-mauve), var(--ctp-blue));"></div>
+      </div>
+    </div>
 
     <!-- ════════════════════════════════════════════════════════
-         AUDIO PLAYERS
+         AUDIO PLAYERS & LIBRARY PLAYLIST
          ════════════════════════════════════════════════════════ -->
-    <section class="section players-grid" aria-label="Audio broadcasts">
+    <section class="section players-grid" aria-label="Audio broadcasts & library">
+
+      <!-- Playlist selector card -->
+      <div class="player-card" style="display:flex; flex-direction:column; padding:1.25rem; min-height:280px;" id="playlistCard">
+        <div class="player-header" style="margin-bottom:0.75rem;">
+          <div class="player-meta">
+            <span class="player-type" style="background:color-mix(in srgb, var(--ctp-accent2) 20%, transparent); color:var(--ctp-accent2)">📜 Library</span>
+            <div class="player-title" style="margin-top:0.25rem;">Broadcast History</div>
+            <div class="player-duration">Select edition to load media</div>
+          </div>
+        </div>
+        <div id="audioPlaylist" style="display:flex; flex-direction:column; gap:0.5rem; max-height:240px; overflow-y:auto; padding-right:4px; flex:1;">
+          <!-- Playlist items injected by JS -->
+          <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
+          <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
+          <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+        </div>
+      </div>
 
       <!-- Flash Briefing -->
       <div class="player-card radio" id="radioCard">
@@ -740,9 +827,11 @@
     const $ = id => document.getElementById(id);
     const themeSelect      = $('themeSelect');
     const refreshBtn       = $('refreshBtn');
+    const scrapeBtn        = $('scrapeBtn');
+    const scrapeProgressBar = $('scrapeProgressBar');
     const statusDot        = $('statusDot');
     const statusText       = $('statusText');
-    const dateGrid         = $('dateGrid');
+    const audioPlaylist    = $('audioPlaylist');
     const radioContent     = $('radioContent');
     const podcastContent   = $('podcastContent');
     const epubViewer       = $('epub-viewer');
@@ -752,6 +841,9 @@
     const prevChapterBtn   = $('prevChapter');
     const nextChapterBtn   = $('nextChapter');
     const chapterIndicator = $('chapterIndicator');
+
+    let scrapePollingInterval = null;
+    let isScrapingActive = false;
 
     // ── Theme ──────────────────────────────────────────────────
     function applyTheme(theme) {
@@ -791,14 +883,16 @@
     }
 
     // ── Fetch media list from Rust server ─────────────────────
-    async function loadMediaList() {
-      setStatus('Fetching media library…', 'loading');
-      refreshBtn.disabled = true;
-      dateGrid.innerHTML = `
-        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
-        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
-        <div class="skeleton" style="height:32px;width:110px;border-radius:20px;"></div>
-      `;
+    async function loadMediaList(silent = false) {
+      if (!silent) {
+        setStatus('Fetching media library…', 'loading');
+        refreshBtn.disabled = true;
+        audioPlaylist.innerHTML = `
+          <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
+          <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
+          <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+        `;
+      }
 
       try {
         const resp = await fetch('/api/media');
@@ -807,39 +901,60 @@
         mediaData = data.dates || [];
 
         if (mediaData.length === 0) {
-          setStatus('No media found. Run the scraper to generate content.', 'error');
-          dateGrid.innerHTML = '<span style="color:var(--ctp-overlay1);font-size:0.82rem">No editions available yet</span>';
+          if (!silent) setStatus('No media found. Run the scraper to generate content.', 'error');
+          audioPlaylist.innerHTML = '<span style="color:var(--ctp-overlay1);font-size:0.82rem;padding:0.5rem;">No editions available</span>';
           return;
         }
 
-        renderDateChips();
-        setStatus(`${mediaData.length} edition(s) available`, 'active');
+        renderPlaylist();
+        if (!silent) setStatus(`${mediaData.length} edition(s) available`, 'active');
 
-        // Auto-select the most recent date
-        selectDate(mediaData[0].date);
+        // Auto-select the most recent date if nothing is selected yet
+        if (!activeDate && mediaData.length > 0) {
+          selectDate(mediaData[0].date);
+        }
 
       } catch (err) {
-        setStatus(`Error loading media: ${err.message}`, 'error');
-        dateGrid.innerHTML = '<span style="color:var(--ctp-red);font-size:0.82rem">⚠ Could not load media list</span>';
+        if (!silent) {
+          setStatus(`Error loading media: ${err.message}`, 'error');
+          audioPlaylist.innerHTML = '<span style="color:var(--ctp-red);font-size:0.82rem">⚠ Could not load library</span>';
+        }
         toast(`Failed to load media: ${err.message}`, 'error');
       } finally {
         refreshBtn.disabled = false;
       }
     }
 
-    // ── Render date selection chips ────────────────────────────
-    function renderDateChips() {
-      dateGrid.innerHTML = '';
-      mediaData.forEach(entry => {
-        const chip = document.createElement('button');
-        chip.className = `date-chip${entry.date === activeDate ? ' active' : ''}`;
-        chip.setAttribute('role', 'option');
-        chip.setAttribute('aria-selected', entry.date === activeDate);
-        chip.setAttribute('data-date', entry.date);
-        chip.textContent = formatDate(entry.date);
-        chip.title = `Edition: ${entry.date}`;
-        chip.addEventListener('click', () => selectDate(entry.date));
-        dateGrid.appendChild(chip);
+    // ── Render vertical playlist selection ────────────────────
+    function renderPlaylist() {
+      audioPlaylist.innerHTML = '';
+      // Limit history to last 10 runs
+      const last10 = mediaData.slice(0, 10);
+      last10.forEach(entry => {
+        const item = document.createElement('button');
+        item.className = `playlist-item${entry.date === activeDate ? ' active' : ''}`;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', entry.date === activeDate);
+        item.setAttribute('data-date', entry.date);
+
+        // Build content badges
+        let badgesHtml = '';
+        if (entry.epub) badgesHtml += '<span class="badge">📖 Book</span>';
+        if (entry.radio) badgesHtml += '<span class="badge">📻 Radio</span>';
+        if (entry.podcast) badgesHtml += '<span class="badge">🎧 Podcast</span>';
+
+        item.innerHTML = `
+          <div class="playlist-item-meta">
+            <span class="playlist-item-date">${formatDate(entry.date)}</span>
+            <div class="playlist-item-badges">
+              ${badgesHtml || '<span class="badge">Processing</span>'}
+            </div>
+          </div>
+          <span style="font-size: 1.1rem; opacity: 0.8;">▶</span>
+        `;
+
+        item.addEventListener('click', () => selectDate(entry.date));
+        audioPlaylist.appendChild(item);
       });
     }
 
@@ -847,11 +962,11 @@
     function selectDate(dateStr) {
       activeDate = dateStr;
 
-      // Update chip states
-      document.querySelectorAll('.date-chip').forEach(chip => {
-        const isActive = chip.dataset.date === dateStr;
-        chip.classList.toggle('active', isActive);
-        chip.setAttribute('aria-selected', isActive);
+      // Update item active states
+      document.querySelectorAll('.playlist-item').forEach(item => {
+        const isActive = item.dataset.date === dateStr;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-selected', isActive);
       });
 
       const entry = mediaData.find(e => e.date === dateStr);
@@ -1066,10 +1181,66 @@
     });
 
     // ── Refresh button ─────────────────────────────────────────
-    refreshBtn.addEventListener('click', loadMediaList);
+    refreshBtn.addEventListener('click', () => loadMediaList(false));
+
+    // ── Manual Scrape Trigger ──────────────────────────────────
+    async function triggerScraper() {
+      if (isScrapingActive) return;
+      
+      try {
+        scrapeBtn.disabled = true;
+        const resp = await fetch('/api/scrape/trigger', { method: 'POST' });
+        if (resp.status === 409) {
+          toast('Scraper pipeline is already running.', 'error');
+          return;
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        
+        toast('Scraper run triggered successfully!', 'success');
+        checkScraperStatus();
+      } catch (err) {
+        toast(`Failed to trigger scraper: ${err.message}`, 'error');
+        scrapeBtn.disabled = false;
+      }
+    }
+
+    scrapeBtn.addEventListener('click', triggerScraper);
+
+    // ── Polling Scraper Status ──────────────────────────────────
+    async function checkScraperStatus() {
+      try {
+        const resp = await fetch('/api/scrape/status');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        
+        if (data.running) {
+          isScrapingActive = true;
+          scrapeBtn.disabled = true;
+          scrapeBtn.innerHTML = '⚙️ Running...';
+          scrapeProgressBar.style.display = 'block';
+          setStatus('News Station is actively compiling & curating...', 'loading');
+        } else {
+          // If it was running but just stopped, reload the media library
+          if (isScrapingActive) {
+            isScrapingActive = false;
+            scrapeBtn.disabled = false;
+            scrapeBtn.innerHTML = '⚡ Run Scraper';
+            scrapeProgressBar.style.display = 'none';
+            toast('Daily news run completed!', 'success');
+            loadMediaList(false);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to query scraper status:', err);
+      }
+    }
+
+    // Poll status every 3 seconds
+    setInterval(checkScraperStatus, 3000);
 
     // ── Bootstrap ─────────────────────────────────────────────
-    loadMediaList();
+    loadMediaList(false);
+    checkScraperStatus();
 
   })();
   </script>
