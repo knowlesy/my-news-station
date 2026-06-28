@@ -27,7 +27,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -261,7 +261,8 @@ async def fetch_rendered_html(context, url: str) -> str:
     then return the full rendered HTML. Stealth patches are applied per-page.
     """
     page = await context.new_page()
-    await stealth_async(page)   # apply playwright-stealth fingerprint scrambling
+    # playwright-stealth 2.x: patch fingerprint directly on the page object
+    await Stealth().apply_stealth_async(page)
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -275,6 +276,7 @@ async def fetch_rendered_html(context, url: str) -> str:
         await page.close()
 
     return html
+
 
 
 # ═══════════════════════════════════════════════════════════════════
