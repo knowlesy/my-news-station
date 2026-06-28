@@ -641,9 +641,7 @@ def build_epub(content_md: str, date_str: str) -> Path:
             lang="en",
         )
         chapter.set_content(
-            f'<?xml version="1.0" encoding="utf-8"?>'
-            f'<!DOCTYPE html>'
-            f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">'
+            f'<html>'
             f'<head>'
             f'  <title>{chapter_title}</title>'
             f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
