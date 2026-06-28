@@ -74,8 +74,8 @@ USER_AGENT = (
 )
 
 # ── TTS voices ───────────────────────────────────────────────────
-VOICE_SHORT = "en-GB-SoniaNeural"   # Flash briefing — crisp British female
-VOICE_LONG  = "en-US-GuyNeural"     # Long podcast — warm American male
+VOICE_SHORT = os.getenv("VOICE_SHORT", "en-GB-SoniaNeural")   # Flash briefing — crisp British female
+VOICE_LONG  = os.getenv("VOICE_LONG", "en-US-GuyNeural")     # Long podcast — warm American male
 
 # ═══════════════════════════════════════════════════════════════════
 # LOGGING
