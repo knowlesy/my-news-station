@@ -487,13 +487,11 @@ def curate_audio_highlights(all_articles: list[dict]) -> list[dict]:
 SYSTEM_PROMPT = """\
 You are an advanced news editing and broadcasting engine. You are provided with a complete daily pool of articles, along with a marked list of curated audio highlights. Process this text and wrap your outputs in these designated XML tags:
 
-<epub_content>: You must include EVERY SINGLE ONE of the top 10 articles provided from each source. Clean up the raw text to remove web junk, and format them beautifully using Markdown (`##` for article titles as chapters). This must serve as an unabridged daily newspaper.
-
-<short_radio>: Focus ONLY on the marked audio highlights and top stories. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
+- <short_radio>: Focus ONLY on the marked audio highlights and top stories. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
   CRITICAL TIME CONSTRAINT: This script MUST be crisp and tightly edited. It must absolutely NOT exceed a 30-minute reading time under any circumstances. Target a high-density delivery between 500 to 2,000 words total.
   Structure: Continuous text script. For each story, use: "[Source] reported that [Headline], [details]". NO markdown formatting, asterisks, or bolding. Translate code/terminal commands into conceptual, easy-to-understand audio explanations.
 
-<long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. NO speaker tags or audio cues. Pure text prose optimized for TTS.\
+- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. NO speaker tags or audio cues. Pure text prose optimized for TTS.\
 """
 
 
@@ -584,10 +582,10 @@ a { color: #89b4fa; }
 """
 
 
-def build_epub(content_md: str, date_str: str) -> Path:
+def build_epub(all_articles: list[dict], date_str: str) -> Path:
     """
-    Convert the LLM-generated Markdown into a structured EPUB 3 file.
-    Each ## heading becomes a separate chapter in the table of contents.
+    Convert the scraped articles list into a structured EPUB 3 file directly.
+    Each article becomes a separate chapter in the table of contents.
     """
     book = epub.EpubBook()
     book.set_identifier(f"daily-news-{date_str}")
@@ -608,32 +606,28 @@ def build_epub(content_md: str, date_str: str) -> Path:
     chapters: list[epub.EpubHtml] = []
     spine: list = ["nav"]
 
-    # Split content by ## headings — each becomes a chapter
-    raw_sections = re.split(r"(?m)^## ", content_md)
-    # Discard any preamble before the first ##
-    sections = [s for s in raw_sections if s.strip()]
+    for idx, article in enumerate(all_articles):
+        source_name = article.get("source", "Unknown Source")
+        chapter_title = article.get("title", f"Article {idx + 1}").strip()
+        chapter_body = article.get("content", "").strip()
 
-    # Fallback: if no chapters were parsed, treat the entire string as a single chapter
-    if not sections:
-        sections = [f"Daily News Digest\n\n{content_md or 'No content generated.'}"]
+        if not chapter_body:
+            chapter_body = article.get("summary", "(No content available)")
 
-    for idx, section in enumerate(sections):
-        lines = section.strip().split("\n", 1)
-        chapter_title = lines[0].strip() if lines else f"Article {idx + 1}"
-        chapter_body  = lines[1].strip() if len(lines) > 1 else ""
-
-        # Lightweight Markdown → HTML conversion
+        # Convert markdown-like paragraphs to HTML
         paragraphs = [p.strip() for p in chapter_body.split("\n\n") if p.strip()]
         html_paras = []
         for para in paragraphs:
-            # Bold and italic inline markup
+            # Simple markdown replacements
             para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", para)
             para = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", para)
-            # Inline code
             para = re.sub(r"`(.+?)`", r"<code>\1</code>", para)
             html_paras.append(f"<p>{para}</p>")
 
-        body_html = "\n".join(html_paras) or "<p>(content unavailable)</p>"
+        body_html = "\n".join(html_paras) or "<p>(Content unavailable)</p>"
+        
+        # Add metadata source tag to the top of the article body
+        source_tag = f'<div class="source-tag">Source: {source_name}</div>'
 
         chapter = epub.EpubHtml(
             title=chapter_title,
@@ -647,6 +641,7 @@ def build_epub(content_md: str, date_str: str) -> Path:
             f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
             f'</head>'
             f'<body>'
+            f'  {source_tag}'
             f'  <h2>{chapter_title}</h2>'
             f'  {body_html}'
             f'</body>'
@@ -748,18 +743,11 @@ async def run_pipeline() -> None:
         log.warning("LLM response is completely empty!")
 
     # ── Phase 4: Parse XML blocks ─────────────────────────────────
-    epub_content = extract_xml_block(llm_response, "epub_content")
     short_radio  = extract_xml_block(llm_response, "short_radio")
     long_podcast = extract_xml_block(llm_response, "long_podcast")
 
-    # Fallback: use raw response for EPUB if XML tags are missing
-    if not epub_content:
-        log.warning("Falling back to raw LLM response for EPUB content")
-        epub_content = llm_response
-
     # ── Phase 5: Build EPUB ───────────────────────────────────────
-    if epub_content:
-        build_epub(epub_content, date_str)
+    build_epub(all_articles, date_str)
 
     # ── Phase 6: Generate audio tracks ───────────────────────────
     radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
