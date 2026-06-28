@@ -47,7 +47,7 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "claude_cli")
 GOOGLE_AI_KEY   = os.getenv("GOOGLE_AI_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL    = os.getenv("CLAUDE_MODEL", "claude-opus-4-5")
-GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ── News sources ─────────────────────────────────────────────────
 # Add/remove RSS feeds here; each entry is scraped for TOP_N articles.
@@ -114,6 +114,14 @@ def call_gemini(prompt: str) -> str:
     }
     log.info("→ Calling Gemini (%s)…", GEMINI_MODEL)
     resp = requests.post(url, json=payload, timeout=180)
+    if resp.status_code != 200:
+        log.error("Gemini API Error Response Body: %s", resp.text)
+    if resp.status_code == 404:
+        raise RuntimeError(
+            f"Gemini model '{GEMINI_MODEL}' not found (404).\n"
+            f"'gemini-1.5-pro' is deprecated — use 'gemini-2.0-flash'.\n"
+            f"Set GEMINI_MODEL=gemini-2.0-flash in your .env file."
+        )
     resp.raise_for_status()
     return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
@@ -605,6 +613,10 @@ def build_epub(content_md: str, date_str: str) -> Path:
     # Discard any preamble before the first ##
     sections = [s for s in raw_sections if s.strip()]
 
+    # Fallback: if no chapters were parsed, treat the entire string as a single chapter
+    if not sections:
+        sections = [f"Daily News Digest\n\n{content_md or 'No content generated.'}"]
+
     for idx, section in enumerate(sections):
         lines = section.strip().split("\n", 1)
         chapter_title = lines[0].strip() if lines else f"Article {idx + 1}"
@@ -729,7 +741,13 @@ async def run_pipeline() -> None:
     # ── Phase 3: LLM Processing ───────────────────────────────────
     log.info("Building mega-prompt and calling LLM…")
     prompt = build_prompt(all_articles)
+    log.info("Prompt size (chars): %d", len(prompt))
     llm_response = call_llm(prompt)
+    log.info("LLM response received. Length: %d characters", len(llm_response))
+    if len(llm_response) > 0:
+        log.info("Response preview (first 500 chars):\n%s", llm_response[:500])
+    else:
+        log.warning("LLM response is completely empty!")
 
     # ── Phase 4: Parse XML blocks ─────────────────────────────────
     epub_content = extract_xml_block(llm_response, "epub_content")
