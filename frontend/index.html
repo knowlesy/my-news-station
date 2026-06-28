@@ -6,6 +6,8 @@
   <title>My News Station</title>
   <meta name="description" content="Self-hosted AI-powered daily news digest with audio briefings and EPUB reader" />
 
+  <!-- jszip (required by epub.js to read zipped .epub files) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <!-- epub.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 
@@ -716,7 +718,7 @@
           <div class="player-meta">
             <span class="player-type" style="background:color-mix(in srgb, var(--ctp-accent2) 20%, transparent); color:var(--ctp-accent2)">📜 Library</span>
             <div class="player-title" style="margin-top:0.25rem;">Broadcast History</div>
-            <div class="player-duration">Select edition to load media</div>
+            <div class="player-duration" id="playlistSubtitle">Select edition to load media</div>
           </div>
         </div>
         <div id="audioPlaylist" style="display:flex; flex-direction:column; gap:0.5rem; max-height:240px; overflow-y:auto; padding-right:4px; flex:1;">
@@ -841,6 +843,7 @@
     const prevChapterBtn   = $('prevChapter');
     const nextChapterBtn   = $('nextChapter');
     const chapterIndicator = $('chapterIndicator');
+    const playlistSubtitle = $('playlistSubtitle');
 
     let scrapePollingInterval = null;
     let isScrapingActive = false;
@@ -874,12 +877,25 @@
 
     // ── Format YYYYMMDD → human readable ──────────────────────
     function formatDate(dateStr) {
-      if (!dateStr || dateStr.length !== 8) return dateStr;
-      const y = dateStr.slice(0, 4);
-      const m = dateStr.slice(4, 6);
-      const d = dateStr.slice(6, 8);
-      const dt = new Date(`${y}-${m}-${d}`);
-      return dt.toLocaleDateString('en-GB', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
+      if (!dateStr) return dateStr;
+      if (dateStr.length === 15) {
+        const y = dateStr.slice(0, 4);
+        const m = dateStr.slice(4, 6);
+        const d = dateStr.slice(6, 8);
+        const hh = dateStr.slice(9, 11);
+        const mm = dateStr.slice(11, 13);
+        const dt = new Date(`${y}-${m}-${d}T${hh}:${mm}:00`);
+        const dStr = dt.toLocaleDateString('en-GB', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
+        return `${dStr} · ${hh}:${mm}`;
+      }
+      if (dateStr.length === 8) {
+        const y = dateStr.slice(0, 4);
+        const m = dateStr.slice(4, 6);
+        const d = dateStr.slice(6, 8);
+        const dt = new Date(`${y}-${m}-${d}`);
+        return dt.toLocaleDateString('en-GB', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
+      }
+      return dateStr;
     }
 
     // ── Fetch media list from Rust server ─────────────────────
@@ -968,6 +984,8 @@
         item.classList.toggle('active', isActive);
         item.setAttribute('aria-selected', isActive);
       });
+
+      playlistSubtitle.textContent = `Active: ${formatDate(dateStr)}`;
 
       const entry = mediaData.find(e => e.date === dateStr);
       if (!entry) return;

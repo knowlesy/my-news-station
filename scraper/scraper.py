@@ -306,6 +306,7 @@ def scrape_rss(feed: dict) -> list[dict]:
                 entry.get("summary", ""), "html.parser"
             ).get_text(strip=True)[:500],
             "content": "",
+            "author":  "",
             "audio_highlight": False,
         })
 
@@ -373,6 +374,7 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
             "url":             full_url,
             "summary":         "",
             "content":         "",
+            "author":          "",
             "audio_highlight": False,
         })
 
@@ -381,6 +383,78 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
 
     log.info("  ↳ %d articles from Medium/%s", len(articles), tag)
     return articles
+
+
+def extract_author(html: str) -> str:
+    """Extract the author name from HTML metadata or standard tags."""
+    if not html:
+        return ""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        
+        # 1. Try meta name="author"
+        meta_author = soup.find("meta", attrs={"name": "author"})
+        if meta_author and meta_author.get("content"):
+            return meta_author["content"].strip()
+            
+        # 2. Try meta property="article:author"
+        meta_art_author = soup.find("meta", attrs={"property": "article:author"})
+        if meta_art_author and meta_art_author.get("content"):
+            return meta_art_author["content"].strip()
+            
+        # 3. Try standard Medium author testids/classes
+        author_el = soup.find("a", attrs={"data-testid": "authorName"})
+        if author_el:
+            return author_el.get_text(strip=True)
+            
+        # 4. Try any link with rel="author"
+        rel_author = soup.find(attrs={"rel": "author"})
+        if rel_author:
+            return rel_author.get_text(strip=True)
+    except Exception:
+        pass
+    return ""
+
+
+def format_text_to_html(text: str) -> str:
+    """
+    Format plain text/markdown into well-formed XHTML.
+    Protects code blocks fenced with ``` and escapes special characters to prevent parser errors.
+    """
+    if not text:
+        return "<p>(No content available)</p>"
+
+    import html
+    
+    # Split by fenced code blocks
+    parts = text.split("```")
+    html_blocks = []
+    
+    for idx, part in enumerate(parts):
+        # Odd indices are fenced code blocks
+        if idx % 2 != 0:
+            lines = part.split("\n")
+            # If the first line is a language name, discard it or use it as class
+            first_line = lines[0].strip().lower()
+            if first_line in ["python", "bash", "sh", "json", "yaml", "yml", "terraform", "hcl", "dockerfile", "javascript", "js", "html", "css"]:
+                code_content = "\n".join(lines[1:])
+            else:
+                code_content = part
+            
+            escaped_code = html.escape(code_content.strip())
+            html_blocks.append(f"<pre><code>{escaped_code}</code></pre>")
+        else:
+            # Regular text paragraphs
+            paragraphs = [p.strip() for p in part.split("\n\n") if p.strip()]
+            for para in paragraphs:
+                escaped_para = html.escape(para)
+                # Apply inline styles
+                escaped_para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped_para)
+                escaped_para = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", escaped_para)
+                escaped_para = re.sub(r"`(.+?)`", r"<code>\1</code>", escaped_para)
+                html_blocks.append(f"<p>{escaped_para}</p>")
+                
+    return "\n".join(html_blocks)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -418,6 +492,7 @@ async def extract_article_content(context, article: dict) -> dict:
                 include_tables=True,
             )
         article["content"] = extracted or article.get("summary", f"[Content unavailable: {url}]")
+        article["author"] = extract_author(html)
     else:
         article["content"] = article.get("summary", f"[Failed to fetch: {url}]")
 
@@ -489,9 +564,9 @@ You are an advanced news editing and broadcasting engine. You are provided with 
 
 - <short_radio>: Focus ONLY on the marked audio highlights and top stories. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
   CRITICAL TIME CONSTRAINT: This script MUST be crisp and tightly edited. It must absolutely NOT exceed a 30-minute reading time under any circumstances. Target a high-density delivery between 500 to 2,000 words total.
-  Structure: Continuous text script. For each story, use: "[Source] reported that [Headline], [details]". NO markdown formatting, asterisks, or bolding. Translate code/terminal commands into conceptual, easy-to-understand audio explanations.
+  Structure: Continuous text script. Group stories by source and introduce them naturally (e.g., 'The following is reported by BBC News:' or 'From BBC News, first we have...') instead of repeating '[Source] reported that' for each individual story. Keep the narration flowing, conversational, and natural. NO markdown formatting, asterisks, or bolding. Translate code/terminal commands into conceptual, easy-to-understand audio explanations.
 
-- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. NO speaker tags or audio cues. Pure text prose optimized for TTS.\
+- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. Group stories by source and introduce them naturally instead of repeating '[Source] reported that' repeatedly. NO speaker tags or audio cues. Pure text prose optimized for TTS.\
 """
 
 
@@ -589,7 +664,7 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
     """
     book = epub.EpubBook()
     book.set_identifier(f"daily-news-{date_str}")
-    book.set_title(f"Daily News — {datetime.strptime(date_str, '%Y%m%d').strftime('%d %B %Y')}")
+    book.set_title(f"Daily News — {datetime.strptime(date_str[:8], '%Y%m%d').strftime('%d %B %Y')}")
     book.set_language("en")
     book.add_author("AI News Station")
     book.add_metadata("DC", "description", "Automated daily news digest")
@@ -614,20 +689,12 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
         if not chapter_body:
             chapter_body = article.get("summary", "(No content available)")
 
-        # Convert markdown-like paragraphs to HTML
-        paragraphs = [p.strip() for p in chapter_body.split("\n\n") if p.strip()]
-        html_paras = []
-        for para in paragraphs:
-            # Simple markdown replacements
-            para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", para)
-            para = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", para)
-            para = re.sub(r"`(.+?)`", r"<code>\1</code>", para)
-            html_paras.append(f"<p>{para}</p>")
-
-        body_html = "\n".join(html_paras) or "<p>(Content unavailable)</p>"
+        body_html = format_text_to_html(chapter_body)
         
         # Add metadata source tag to the top of the article body
-        source_tag = f'<div class="source-tag">Source: {source_name}</div>'
+        author_name = article.get("author", "").strip()
+        author_suffix = f" · By {author_name}" if author_name else ""
+        source_tag = f'<div class="source-tag">Source: {source_name}{author_suffix}</div>'
 
         chapter = epub.EpubHtml(
             title=chapter_title,
@@ -688,7 +755,7 @@ async def generate_tts(text: str, output_path: Path, voice: str) -> None:
 # ═══════════════════════════════════════════════════════════════════
 
 async def run_pipeline() -> None:
-    date_str = datetime.now().strftime("%Y%m%d")
+    date_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     log.info("══════════════════════════════════════════════════")
