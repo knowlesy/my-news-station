@@ -27,6 +27,9 @@ services:
       FRONTEND_DIR: /app/frontend
       BIND_ADDR: "0.0.0.0:3000"
       RUST_LOG: "news_server=info"
+      PYTHON_BIN: "python"
+      SCRAPER_SCRIPT: "/app/scraper/scraper.py"
+      DISPLAY: ":99"
     volumes:
       - news-data:/app/data
       - claude-creds:/root/.claude
