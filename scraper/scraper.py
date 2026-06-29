@@ -881,57 +881,75 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
     )
     book.add_item(css_item)
 
+    # Group articles by source, maintaining original chronological order within each source
+    from collections import defaultdict
+    articles_by_source = defaultdict(list)
+    source_order = []
+    for article in all_articles:
+        source = article.get("source", "Unknown Source").strip()
+        if source not in source_order:
+            source_order.append(source)
+        articles_by_source[source].append(article)
+
     chapters: list[epub.EpubHtml] = []
     spine: list = ["nav"]
+    toc = []
 
-    for idx, article in enumerate(all_articles):
-        source_name = article.get("source", "Unknown Source")
-        chapter_title = article.get("title", f"Article {idx + 1}").strip()
-        chapter_body = article.get("content", "").strip()
+    chapter_index = 0
+    for source in source_order:
+        source_articles = articles_by_source[source]
+        source_chapters = []
 
-        if not chapter_body:
-            chapter_body = article.get("summary", "(No content available)")
+        for article in source_articles:
+            chapter_title = article.get("title", f"Article {chapter_index + 1}").strip()
+            chapter_body = article.get("content", "").strip()
 
-        body_html = format_text_to_html(chapter_body)
-        
-        # Add metadata source tag to the top of the article body
-        author_name = article.get("author", "").strip()
-        author_suffix = f" · By {author_name}" if author_name else ""
-        article_url = article.get("url", "")
-        url_link = f' · <a href="{article_url}">Original Article</a>' if article_url else ""
-        source_tag = f'<div class="source-tag">Source: {source_name}{author_suffix}{url_link}</div>'
+            if not chapter_body:
+                chapter_body = article.get("summary", "(No content available)")
 
-        # Render images if present
-        image_html = ""
-        for img_url in article.get("images", []):
-            image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{img_url}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
+            body_html = format_text_to_html(chapter_body)
+            
+            author_name = article.get("author", "").strip()
+            author_suffix = f" · By {author_name}" if author_name else ""
+            article_url = article.get("url", "")
+            url_link = f' · <a href="{article_url}">Original Article</a>' if article_url else ""
+            source_tag = f'<div class="source-tag">Source: {source}{author_suffix}{url_link}</div>'
 
-        chapter = epub.EpubHtml(
-            title=chapter_title,
-            file_name=f"text/chap_{idx:03d}.xhtml",
-            lang="en",
-        )
-        chapter.set_content(
-            f'<html>'
-            f'<head>'
-            f'  <title>{chapter_title}</title>'
-            f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
-            f'</head>'
-            f'<body>'
-            f'  {source_tag}'
-            f'  <h2>{chapter_title}</h2>'
-            f'  {image_html}'
-            f'  {body_html}'
-            f'</body>'
-            f'</html>'
-        )
-        chapter.add_item(css_item)
-        book.add_item(chapter)
-        chapters.append(chapter)
-        spine.append(chapter)
+            image_html = ""
+            for img_url in article.get("images", []):
+                image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{img_url}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
+
+            chapter = epub.EpubHtml(
+                title=chapter_title,
+                file_name=f"text/chap_{chapter_index:03d}.xhtml",
+                lang="en",
+            )
+            chapter.set_content(
+                f'<html>'
+                f'<head>'
+                f'  <title>{chapter_title}</title>'
+                f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
+                f'</head>'
+                f'<body>'
+                f'  {source_tag}'
+                f'  <h2>{chapter_title}</h2>'
+                f'  {image_html}'
+                f'  {body_html}'
+                f'</body>'
+                f'</html>'
+            )
+            chapter.add_item(css_item)
+            book.add_item(chapter)
+            
+            source_chapters.append(chapter)
+            chapters.append(chapter)
+            spine.append(chapter)
+            chapter_index += 1
+
+        toc.append((epub.Section(source), source_chapters))
 
     # Navigation and spine
-    book.toc = [(epub.Section("Daily Articles"), chapters)]
+    book.toc = toc
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine
