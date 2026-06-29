@@ -1574,8 +1574,22 @@
              aria-label="Download ${label} MP3">
             ⬇ Download MP3
           </a>
+          <button
+            id="regenBtn-${type}"
+            onclick="triggerRegenAudio('${dateStr}', '${type}')"
+            title="Re-run LLM + TTS for this date (no full re-scrape)"
+            style="padding:0 0.85rem; height:36px; font-size:0.78rem; font-weight:600;
+                   background:var(--ctp-surface0); color:var(--ctp-text);
+                   border:1px solid var(--ctp-surface1); border-radius:8px;
+                   cursor:pointer; display:inline-flex; align-items:center; gap:0.4rem;
+                   transition:background 0.15s;"
+            onmouseover="this.style.background='var(--ctp-surface1)'"
+            onmouseout="this.style.background='var(--ctp-surface0)'">
+            🔁 Re-generate
+          </button>
         </div>
       `;
+
 
       // Wire up progress fill bar
       const audio = $(audioId);
@@ -1848,17 +1862,18 @@
         const resp = await fetch(`/api/scrape/regen-audio?${qParams.toString()}`, { method: 'POST' });
         if (resp.status === 409) {
           toast('A scraper job is already running.', 'error');
-          if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate Audio'; }
+          if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate'; }
           return;
         }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        toast('Audio regeneration started! LLM → TTS only, no re-scrape.', 'success');
+        toast('Re-generating audio — LLM + TTS running, no full re-scrape.', 'success');
         checkScraperStatus();
       } catch (err) {
         toast(`Failed to start audio regen: ${err.message}`, 'error');
-        if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate Audio'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate'; }
       }
     }
+
 
     // ── Polling Scraper Status ──────────────────────────────────
     let isConsoleCollapsed = false;
