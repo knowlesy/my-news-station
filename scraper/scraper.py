@@ -1134,6 +1134,48 @@ async def run_pipeline() -> None:
     log.info("══════════════════════════════════════════════════")
 
 
+def extract_articles_from_epub(epub_path: Path) -> list[dict]:
+    """Fallback parser to reconstruct the articles list from a previously generated EPUB."""
+    import ebooklib
+    from ebooklib import epub
+    from bs4 import BeautifulSoup
+
+    book = epub.read_epub(str(epub_path))
+    articles = []
+    
+    for item in book.get_items():
+        if item.get_type() == ebooklib.ITEM_DOCUMENT and item.file_name.startswith("text/chap_"):
+            soup = BeautifulSoup(item.get_content(), 'html.parser')
+            
+            title_tag = soup.find('h2')
+            title = title_tag.text.strip() if title_tag else "Unknown Title"
+            
+            source_tag = soup.find('div', class_='source-tag')
+            source = "Unknown Source"
+            url = ""
+            if source_tag:
+                source_text = source_tag.text
+                if source_text.startswith("Source: "):
+                    source = source_text[8:].split(" · By ")[0].split(" · ")[0]
+                url_a = source_tag.find('a')
+                if url_a:
+                    url = url_a.get('href', '')
+                    
+            content_pieces = []
+            for p in soup.find_all(['p', 'li']):
+                content_pieces.append(p.text.strip())
+            content = "\n\n".join(content_pieces)
+            
+            articles.append({
+                "title": title,
+                "source": source.strip(),
+                "url": url,
+                "content": content,
+            })
+            
+    return articles
+
+
 async def run_regen_audio(date_str: str) -> None:
     """
     Audio-only regeneration: loads the articles sidecar for *date_str* (YYYYMMDD prefix),
@@ -1149,23 +1191,24 @@ async def run_regen_audio(date_str: str) -> None:
     sidecar_path = DATA_DIR / f"articles-{date_only}.json"
 
     if not sidecar_path.exists():
-        log.error(
-            "No article sidecar found for date '%s'. Expected: %s",
-            date_str, sidecar_path
-        )
-        log.error(
-            "Tip: sidecars are only created from scrapes run after this feature was added. "
-            "Run a new full scrape to generate one."
-        )
-        raise FileNotFoundError(f"Article sidecar not found: {sidecar_path}")
-
-    log.info("══════════════════════════════════════════════════")
-    log.info("  Audio Regen Pipeline  —  %s  [LLM: %s]", date_str, LLM_BACKEND)
-    log.info("══════════════════════════════════════════════════")
-
-    with open(sidecar_path, "r", encoding="utf-8") as f:
-        all_articles = _json.load(f)
-    log.info("Loaded %d articles from sidecar", len(all_articles))
+        epub_path = DATA_DIR / f"daily-news-{date_str}.epub"
+        if not epub_path.exists():
+            log.error(
+                "No article sidecar OR epub found for date '%s'.", date_str
+            )
+            raise FileNotFoundError(f"Article sidecar and EPUB not found for: {date_str}")
+            
+        log.warning("No sidecar found. Falling back to extracting articles from existing EPUB: %s", epub_path.name)
+        all_articles = extract_articles_from_epub(epub_path)
+        
+        # Save it back so future regens are faster
+        with open(sidecar_path, "w", encoding="utf-8") as f:
+            _json.dump(all_articles, f, indent=2)
+    else:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            all_articles = _json.load(f)
+            
+    log.info("Loaded %d articles for regen", len(all_articles))
 
     # Re-apply highlight curation (voice/sources may have changed)
     all_articles = curate_audio_highlights(all_articles)
