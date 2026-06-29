@@ -1175,7 +1175,8 @@
         return;
       }
 
-      sources.forEach(src => {
+      const sorted = [...sources].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      sorted.forEach(src => {
         const label = document.createElement('label');
         label.style.display = 'flex';
         label.style.alignItems = 'center';
