@@ -1,12 +1,14 @@
 # My News Station
 
-A self-hosted, automated daily news media station. Each morning the scraper pulls BBC News and Medium/terraform articles, curates them with AI, and generates:
+A self-hosted, automated daily news media station. Each morning the scraper pulls BBC News, curated DevOps/CI-CD blogs, Substack publications, and Medium sources, curates them with AI, and generates:
 
 - 📖 A full **EPUB** daily newspaper (every article, Reader-Mode cleaned)
 - 📻 A 30-minute **flash radio briefing** MP3
 - 🎧 A long-form **podcast** MP3
 
-All served through a beautiful **Catppuccin**-themed web dashboard with a built-in EPUB reader.
+All served through a beautiful, responsive **Catppuccin**-themed web dashboard with a built-in EPUB reader.
+
+![Dashboard Screenshot](assets/screenshot-dashboard.png)
 
 ---
 
@@ -22,6 +24,7 @@ my-news/
 │   └── src/main.rs         # Axum web server
 ├── frontend/
 │   └── index.html          # Catppuccin SPA dashboard
+├── assets/                 # Documentation screenshots
 ├── data/                   # Generated media (PVC mount)
 ├── k8s/
 │   ├── pvc.yaml            # Storage volumes
@@ -39,68 +42,40 @@ Set `LLM_BACKEND` to one of:
 
 | Value        | Description                                | Required credentials         |
 |-------------|---------------------------------------------|------------------------------|
-| `claude_cli` | Claude via OAuth (no API key needed) ✅ default | Run auth flow once (below)  |
+| `gemini`     | Google AI Studio REST (Recommended)         | `GOOGLE_AI_KEY`              |
+| `claude_cli` | Claude via OAuth (no API key needed)        | Run auth flow once (below)  |
 | `claude_api` | Anthropic Python SDK                        | `ANTHROPIC_API_KEY`          |
-| `gemini`     | Google AI Studio REST                       | `GOOGLE_AI_KEY`              |
 
 ---
 
-## Claude CLI OAuth Setup (One-Time)
+## Quick Start (Docker Compose)
 
-The `claude_cli` backend uses the **Claude Code CLI** with cached OAuth credentials — no API key billing required.
+The easiest way to run the application is using `docker-compose`:
 
-### First time (after container starts):
+```bash
+# 1. Copy template configuration
+cp .env.example .env
+
+# 2. Open .env and set your GOOGLE_AI_KEY
+# 3. Start the services
+docker compose up -d --build
+
+# 4. Open the dashboard in your browser
+open http://localhost:3000
+```
+
+---
+
+## Claude CLI OAuth Setup (Alternative)
+
+If using the `claude_cli` backend:
 
 ```bash
 # 1. Exec into the running container
-docker exec -it my-news claude
+docker exec -it my-news-server claude
 
-# Or for Kubernetes:
-kubectl exec -it -n my-news deploy/news-server -- claude
-```
-
-```
-# 2. The CLI will print something like:
-#    To sign in, open this URL in your browser:
-#    https://claude.ai/oauth/authorize?...
-
-# 3. Open the URL, log in with your Claude.ai account, authorise the app
-# 4. Copy the one-time code shown in the browser
-# 5. Paste it back into the terminal and press Enter
-
-# ✓ Credentials are saved to /root/.claude/ (mounted PVC)
-#   Subsequent scraper runs use the cached session automatically.
-```
-
-> **Note:** The claude-creds-pvc PVC keeps your tokens alive across pod restarts.
-> You only need to run this once (or after the token expires, typically annually).
-
----
-
-## Quick Start (Docker)
-
-```bash
-# 1. Build the image
-docker build -t my-news:latest .
-
-# 2. Run the server
-docker run -d \
-  --name my-news \
-  -p 3000:3000 \
-  -e LLM_BACKEND=claude_cli \
-  -v my-news-data:/app/data \
-  -v my-news-claude:/root/.claude \
-  my-news:latest
-
-# 3. Authenticate Claude CLI (first time only)
-docker exec -it my-news claude
-
-# 4. Open the dashboard
-open http://localhost:3000
-
-# 5. Manually trigger the scraper
-docker exec -it my-news sh -c \
-  "Xvfb :99 -screen 0 1920x1080x24 &>/dev/null & sleep 2 && python /app/scraper/scraper.py"
+# 2. Open the printed authorization URL in your browser
+# 3. Log in with your Claude.ai account, authorize the app, and paste the code back
 ```
 
 ---
@@ -108,64 +83,42 @@ docker exec -it my-news sh -c \
 ## Kubernetes Deployment
 
 ```bash
-# 1. Build and push to your registry
-docker build -t registry.local/my-news:latest .
-docker push registry.local/my-news:latest
-
-# 2. Update image: field in k8s/deployment.yaml to match
-
-# 3. Create the namespace and apply all manifests
+# 1. Create namespace and apply resources
 kubectl apply -f k8s/pvc.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 
-# 4. Create the secrets (fill in real values)
+# 2. Set generic secret credentials
 kubectl create secret generic news-secrets \
   --namespace my-news \
-  --from-literal=LLM_BACKEND=claude_cli \
-  --from-literal=GOOGLE_AI_KEY="" \
-  --from-literal=ANTHROPIC_API_KEY=""
-
-# 5. Authenticate Claude CLI (first time)
-kubectl exec -it -n my-news deploy/news-server -- claude
-
-# 6. Expose via NodePort (edit service.yaml) or port-forward
-kubectl port-forward -n my-news svc/news-server 3000:80
-
-# 7. Trigger a test scrape immediately
-kubectl create job --from=cronjob/news-scraper test-scrape -n my-news
+  --from-literal=LLM_BACKEND=gemini \
+  --from-literal=GOOGLE_AI_KEY="your-google-ai-key"
 ```
 
 ---
 
-## Customising Sources
+## Customizing Sources
 
-Edit `scraper/scraper.py`:
-
-```python
-# Add RSS feeds
-RSS_FEEDS = [
-    {"name": "BBC News",  "url": "http://feeds.bbci.co.uk/news/rss.xml"},
-    {"name": "Reuters",   "url": "https://feeds.reuters.com/reuters/topNews"},
-]
-
-# Add Medium tags
-MEDIUM_TAGS = ["terraform", "devops", "kubernetes"]
-```
+You can manage sources directly inside the web settings modal, which saves configuration to `data/config.json`. The scraper supports:
+- **Standard RSS Feeds**
+- **Medium tags** (e.g. `medium/tags/terraform` for tag feeds)
+- **Medium User Profiles & Publications** (e.g. `@username` or custom domains)
+- **Substack publications** (automatically resolves Substack links to their `/feed` endpoint)
 
 ---
 
 ## Dashboard Features
 
-- **4 Catppuccin themes**: Mocha (default), Macchiato, Frappé, Latte — persisted across sessions
-- **Date chip selector** — auto-selects the most recent edition
-- **Dual audio players** — with animated progress fill bars and MP3 download buttons
-- **Built-in EPUB reader** — epub.js with prev/next chapter navigation and keyboard arrow key support
-- **Keyboard navigation** — `←` / `→` arrow keys for chapter browsing
+- **Catppuccin Theming**: Mocha (default), Macchiato, Frappé, Latte switching.
+- **Dynamic New Badge & Expiration**: Shows green badges and unread edition counts for runs under 12 hours old, reverting to neutral once read.
+- **Live Scraper Console**: Direct monospaced terminal logs modal inside Settings, with auto-scroll and status indicators.
+- **Persistent URL Registry**: Deduplicates already-scraped articles inside `data/scraped_urls.json`, speeding up executions by up to 95% and saving Gemini/Claude tokens.
+- **Optimized Code Rendering**: Monospaced code snippets and formatted CLI blocks render beautifully inside the built-in EPUB reader.
+
+![EPUB Reader Code Block](assets/screenshot-code-block.png)
 
 ---
 
 ## Storage & Cleanup
 
-The Rust server automatically deletes media files older than **10 days** every 6 hours.  
-The `news-data-pvc` PVC is provisioned at 20Gi to comfortably hold a rolling 10-day window.
+The Rust server automatically deletes media files older than **10 days** every 6 hours to ensure persistent volumes do not run out of space.

@@ -53,9 +53,20 @@ GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # Add/remove RSS feeds here; each entry is scraped for TOP_N articles.
 RSS_FEEDS = [
     {"name": "BBC News",  "url": "http://feeds.bbci.co.uk/news/rss.xml"},
-    # Extend with more feeds as needed:
-    # {"name": "Reuters",   "url": "https://feeds.reuters.com/reuters/topNews"},
-    # {"name": "Hacker News", "url": "https://hnrss.org/frontpage"},
+    {"name": "Azure DevOps Blog", "url": "https://devblogs.microsoft.com/devops/feed/"},
+    {"name": "GitHub Engineering Blog", "url": "https://github.blog/feed/"},
+    {"name": "CNCF Blog", "url": "https://www.cncf.io/feed/"},
+    {"name": "Kubernetes Blog", "url": "https://kubernetes.io/feed.xml"},
+    {"name": "Google Cloud Tech Blog", "url": "https://cloudblog.withgoogle.com/rss"},
+    {"name": "HashiCorp Blog", "url": "https://www.hashicorp.com/blog/feed.xml"},
+    {"name": "Ansible Blog", "url": "https://www.ansible.com/blog/rss.xml"},
+    {"name": "Red Hat Blog", "url": "https://www.redhat.com/en/blog/rss.xml"},
+    {"name": "NGINX Blog", "url": "https://www.nginx.com/blog/feed/"},
+    {"name": "Canonical Ubuntu Blog", "url": "https://ubuntu.com/blog/feed"},
+    {"name": "Let's Do DevOps", "url": "https://letsdodevops.substack.com/feed"},
+    {"name": "DevOps Daily", "url": "https://devopsdaily.substack.com/feed"},
+    {"name": "DevOps Bulletin", "url": "https://devopsbulletin.substack.com/feed"},
+    {"name": "DevOpsCube", "url": "https://devopscube.com/feed/"},
 ]
 
 # Medium tags to scrape for top articles
@@ -87,6 +98,45 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("news-station")
+
+# Load dynamic sources config if it exists
+CONFIG_PATH = DATA_DIR / "config.json"
+if CONFIG_PATH.exists():
+    try:
+        import json
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            if "rss_feeds" in cfg:
+                new_feeds = []
+                for item in cfg["rss_feeds"]:
+                    url = ""
+                    if isinstance(item, dict):
+                        url = item.get("url", "")
+                    elif isinstance(item, str):
+                        url = item
+
+                    if not url:
+                        continue
+
+                    # Auto-normalize Substack URLs to RSS feeds
+                    if ".substack.com" in url.lower() and not url.lower().endswith("/feed") and not url.lower().endswith("/feed/"):
+                        url = url.rstrip("/") + "/feed"
+
+                    if isinstance(item, dict):
+                        item["url"] = url
+                        new_feeds.append(item)
+                    elif isinstance(item, str):
+                        from urllib.parse import urlparse
+                        domain = urlparse(url).netloc or "News Feed"
+                        name = domain.replace("www.", "")
+                        new_feeds.append({"name": name, "url": url})
+                RSS_FEEDS = new_feeds
+            if "medium_tags" in cfg:
+                MEDIUM_TAGS = cfg["medium_tags"]
+            log.info("Loaded custom sources config: %d RSS feeds, %d Medium tags", 
+                     len(RSS_FEEDS), len(MEDIUM_TAGS))
+    except Exception as e:
+        log.warning("Failed to load config from %s: %s", CONFIG_PATH, e)
 
 # ═══════════════════════════════════════════════════════════════════
 # LLM BACKENDS
@@ -316,21 +366,43 @@ def scrape_rss(feed: dict) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# MEDIUM TAG INGESTION
+# MEDIUM INGESTION (TAGS, HANDLES & PUBLICATIONS)
 # ═══════════════════════════════════════════════════════════════════
 
-async def scrape_medium_tag(context, tag: str) -> list[dict]:
+async def scrape_medium_source(context, source_input: str) -> list[dict]:
     """
-    Navigate to a Medium tag page using the stealth browser,
+    Navigate to a Medium page (tag, user profile, or publication),
     parse article cards, and return the top TOP_N articles.
-    Medium's DOM changes regularly; we use broad link-pattern matching.
+    Supports tags, user profiles (@username), and publications (URLs or domains).
     """
-    url = f"https://medium.com/tag/{tag}"
-    log.info("Scraping Medium tag: %s → %s", tag, url)
+    source_input = source_input.strip()
+    if not source_input:
+        return []
+
+    # Determine URL and label
+    if source_input.startswith("@"):
+        url = f"https://medium.com/{source_input}"
+        source_label = f"Medium/{source_input}"
+    elif source_input.startswith("http://") or source_input.startswith("https://"):
+        url = source_input
+        from urllib.parse import urlparse
+        parsed = urlparse(source_input)
+        path_clean = parsed.path.strip("/")
+        source_label = f"Medium/{parsed.netloc.replace('www.', '')}"
+        if path_clean:
+            source_label += f"/{path_clean}"
+    elif "." in source_input:
+        url = f"https://{source_input}"
+        source_label = f"Medium/{source_input}"
+    else:
+        url = f"https://medium.com/tag/{source_input}"
+        source_label = f"Medium/tags/{source_input}"
+
+    log.info("Scraping Medium source: %s → %s", source_label, url)
     html = await fetch_rendered_html(context, url)
 
     if not html:
-        log.warning("Got empty HTML for Medium tag: %s", tag)
+        log.warning("Got empty HTML for Medium source: %s", source_input)
         return []
 
     soup = BeautifulSoup(html, "html.parser")
@@ -349,7 +421,9 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
         if href.startswith("http"):
             full_url = href.split("?")[0]
         elif href.startswith("/"):
-            full_url = "https://medium.com" + href.split("?")[0]
+            from urllib.parse import urlparse
+            base_netloc = urlparse(url).netloc
+            full_url = f"https://{base_netloc}" + href.split("?")[0]
         else:
             continue
 
@@ -362,7 +436,6 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
         if title_el:
             title = title_el.get_text(strip=True)
         else:
-            # Fall back to link text if no heading found inside
             raw_text = a_tag.get_text(strip=True)
             title = raw_text[:120] if len(raw_text) > 10 else ""
 
@@ -370,7 +443,7 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
             continue
 
         articles.append({
-            "source":          f"Medium/{tag}",
+            "source":          source_label,
             "title":           title,
             "url":             full_url,
             "summary":         "",
@@ -383,8 +456,25 @@ async def scrape_medium_tag(context, tag: str) -> list[dict]:
         if len(articles) >= TOP_N:
             break
 
-    log.info("  ↳ %d articles from Medium/%s", len(articles), tag)
+    log.info("  ↳ %d articles from %s", len(articles), source_label)
     return articles
+
+
+def is_valid_author(name: str) -> bool:
+    """Check if the extracted author is a valid person/entity name, filtering out URLs or social pages."""
+    if not name:
+        return False
+    name_lower = name.lower().strip()
+    if name_lower.startswith("http://") or name_lower.startswith("https://"):
+        return False
+    if any(k in name_lower for k in ["facebook.com", "twitter.com", "instagram.com", "x.com", "linkedin.com"]):
+        return False
+    # If the text has slashes, it might be a URL path
+    if "/" in name_lower or "\\" in name_lower:
+        return False
+    if len(name.strip()) > 80:
+        return False
+    return True
 
 
 def extract_author(html: str) -> str:
@@ -397,22 +487,30 @@ def extract_author(html: str) -> str:
         # 1. Try meta name="author"
         meta_author = soup.find("meta", attrs={"name": "author"})
         if meta_author and meta_author.get("content"):
-            return meta_author["content"].strip()
+            val = meta_author["content"].strip()
+            if is_valid_author(val):
+                return val
             
         # 2. Try meta property="article:author"
         meta_art_author = soup.find("meta", attrs={"property": "article:author"})
         if meta_art_author and meta_art_author.get("content"):
-            return meta_art_author["content"].strip()
+            val = meta_art_author["content"].strip()
+            if is_valid_author(val):
+                return val
             
         # 3. Try standard Medium author testids/classes
         author_el = soup.find("a", attrs={"data-testid": "authorName"})
         if author_el:
-            return author_el.get_text(strip=True)
+            val = author_el.get_text(strip=True)
+            if is_valid_author(val):
+                return val
             
         # 4. Try any link with rel="author"
         rel_author = soup.find(attrs={"rel": "author"})
         if rel_author:
-            return rel_author.get_text(strip=True)
+            val = rel_author.get_text(strip=True)
+            if is_valid_author(val):
+                return val
     except Exception:
         pass
     return ""
@@ -514,12 +612,26 @@ async def extract_article_content(context, article: dict) -> dict:
     html = await fetch_rendered_html(context, url)
 
     if html:
+        # Preprocess HTML to protect <pre> code blocks from being mangled by trafilatura
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            for pre in soup.find_all("pre"):
+                code_text = pre.get_text()
+                # Wrap in markdown fences and replace pre block with a text element
+                placeholder = soup.new_string(f"\n\n```\n{code_text}\n```\n\n")
+                pre.replace_with(placeholder)
+            html = str(soup)
+        except Exception as e:
+            log.warning("BeautifulSoup code block preprocessing failed: %s", e)
+
         # trafilatura v2 dropped `no_fallback` and `favor_precision`; support both versions
         try:
             extracted = trafilatura.extract(
                 html,
                 include_comments=False,
                 include_tables=True,
+                include_formatting=True,
                 no_fallback=False,
                 favor_precision=True,
             )
@@ -529,6 +641,7 @@ async def extract_article_content(context, article: dict) -> dict:
                 html,
                 include_comments=False,
                 include_tables=True,
+                include_formatting=True,
             )
         article["content"] = extracted or article.get("summary", f"[Content unavailable: {url}]")
         article["author"] = extract_author(html)
@@ -615,7 +728,7 @@ You are an advanced news editing and broadcasting engine. You are provided with 
 def build_prompt(all_articles: list[dict]) -> str:
     """Assemble the single mega-prompt with the filtered article pool."""
     short_sources_list = [s.strip().lower() for s in os.getenv("SHORT_SOURCES", "BBC News").split(",") if s.strip()]
-    long_sources_list = [s.strip().lower() for s in os.getenv("LONG_SOURCES", "BBC News,Medium/terraform").split(",") if s.strip()]
+    long_sources_list = [s.strip().lower() for s in os.getenv("LONG_SOURCES", "BBC News,Medium/tags/terraform").split(",") if s.strip()]
 
     short_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in short_sources_list]
     long_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in long_sources_list]
@@ -639,7 +752,7 @@ def build_prompt(all_articles: list[dict]) -> str:
         f"── CRITICAL CONTENT FILTER RULES ──\n"
         f"- For <short_radio>: You must ONLY cover the following curated stories (from {os.getenv('SHORT_SOURCES', 'BBC News')}):\n"
         f"{short_summary}\n\n"
-        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {os.getenv('LONG_SOURCES', 'BBC News,Medium/terraform')}):\n"
+        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {os.getenv('LONG_SOURCES', 'BBC News,Medium/tags/terraform')}):\n"
         f"{long_summary}\n",
         f"── FULL DAILY POOL (FOR DETAILS) ──",
         "\n\n".join(pool_sections),
@@ -674,6 +787,33 @@ body {
     margin: 2.5em 3em;
     color: #1a1a2e;
     background: #fafafa;
+}
+pre {
+    background-color: #f6f8fa;
+    color: #24292e;
+    padding: 1em;
+    border-radius: 6px;
+    border: 1px solid #e1e4e8;
+    overflow-x: auto;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85em;
+    line-height: 1.45;
+    margin: 1.5em 0;
+}
+code {
+    font-family: 'Courier New', Courier, monospace;
+    background-color: #f6f8fa;
+    color: #d73a49;
+    padding: 0.25em 0.4em;
+    border-radius: 3px;
+    font-size: 0.85em;
+}
+pre code {
+    background-color: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
 }
 h1 {
     font-size: 2.2em;
@@ -742,7 +882,9 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
         # Add metadata source tag to the top of the article body
         author_name = article.get("author", "").strip()
         author_suffix = f" · By {author_name}" if author_name else ""
-        source_tag = f'<div class="source-tag">Source: {source_name}{author_suffix}</div>'
+        article_url = article.get("url", "")
+        url_link = f' · <a href="{article_url}">Original Article</a>' if article_url else ""
+        source_tag = f'<div class="source-tag">Source: {source_name}{author_suffix}{url_link}</div>'
 
         # Render images if present
         image_html = ""
@@ -829,11 +971,31 @@ async def run_pipeline() -> None:
                 rss_articles = scrape_rss(feed)
                 all_articles.extend(rss_articles)
 
-            # Medium tags (requires stealth browser for JS rendering)
+            # Medium sources (requires stealth browser for JS rendering)
             for tag in MEDIUM_TAGS:
-                tag_articles = await scrape_medium_tag(context, tag)
+                tag_articles = await scrape_medium_source(context, tag)
                 medium_articles.extend(tag_articles)
             all_articles.extend(medium_articles)
+
+            # Load previously scraped URLs
+            scraped_urls = set()
+            scraped_urls_path = DATA_DIR / "scraped_urls.json"
+            if scraped_urls_path.exists():
+                try:
+                    import json
+                    with open(scraped_urls_path, "r", encoding="utf-8") as f:
+                        scraped_urls = set(json.load(f))
+                except Exception as e:
+                    log.warning("Failed to load scraped_urls.json: %s", e)
+
+            # Filter out already scraped articles
+            original_count = len(all_articles)
+            all_articles = [a for a in all_articles if a.get("url") not in scraped_urls]
+            log.info("Filtered pool: %d -> %d new articles to process", original_count, len(all_articles))
+
+            if not all_articles:
+                log.info("No new articles found since last run. Pipeline completed.")
+                return
 
             log.info("Total articles in pool: %d", len(all_articles))
 
@@ -878,6 +1040,28 @@ async def run_pipeline() -> None:
         generate_tts(short_radio,  radio_path,   VOICE_SHORT),
         generate_tts(long_podcast, podcast_path, VOICE_LONG),
     )
+
+    # Save newly scraped URLs to persistent file
+    new_urls = [a["url"] for a in all_articles if a.get("url")]
+    if new_urls:
+        try:
+            import json
+            scraped_urls_path = DATA_DIR / "scraped_urls.json"
+            current_scraped = set()
+            if scraped_urls_path.exists():
+                with open(scraped_urls_path, "r", encoding="utf-8") as f:
+                    current_scraped = set(json.load(f))
+            
+            current_scraped.update(new_urls)
+            scraped_list = list(current_scraped)
+            if len(scraped_list) > 2000:
+                scraped_list = scraped_list[-2000:]
+                
+            with open(scraped_urls_path, "w", encoding="utf-8") as f:
+                json.dump(scraped_list, f, indent=2)
+            log.info("Saved %d total scraped URLs to registry", len(scraped_list))
+        except Exception as e:
+            log.warning("Failed to save scraped_urls.json: %s", e)
 
     log.info("══════════════════════════════════════════════════")
     log.info("  Pipeline complete. Output files in %s", DATA_DIR)

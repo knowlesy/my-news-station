@@ -651,6 +651,35 @@
     ::-webkit-scrollbar-track { background: var(--ctp-mantle); }
     ::-webkit-scrollbar-thumb { background: var(--ctp-surface2); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--ctp-overlay0); }
+
+    /* Card cog button and settings drawer */
+    .btn-cog {
+      background: transparent;
+      border: none;
+      color: var(--ctp-subtext0);
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 6px;
+      line-height: 1;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.2s, color 0.2s, transform 0.2s;
+    }
+    .btn-cog:hover {
+      background-color: var(--ctp-surface0);
+      color: var(--ctp-mauve);
+      transform: rotate(30deg);
+    }
+    .card-settings-drawer {
+      border-top: 1px solid var(--ctp-surface0);
+      animation: slide-down 0.25s ease-out;
+    }
+    @keyframes slide-down {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
   </style>
 </head>
 <body>
@@ -672,13 +701,9 @@
       </div>
 
       <div class="header-controls">
-        <label for="themeSelect" class="sr-only" style="position:absolute;clip:rect(0,0,0,0)">Theme</label>
-        <select id="themeSelect" aria-label="Select colour theme" title="Change theme">
-          <option value="mocha"     selected>🌙 Mocha</option>
-          <option value="macchiato">🌆 Macchiato</option>
-          <option value="frappe">   🌤 Frappé</option>
-          <option value="latte">    ☀️ Latte</option>
-        </select>
+        <button id="optionsBtn" class="btn" title="Open Global Settings & Sources" aria-label="Open settings" style="background:var(--ctp-surface0); border:1px solid var(--ctp-surface1); color:var(--ctp-text);">
+          ⚙️ Settings
+        </button>
 
         <button id="refreshBtn" class="btn" title="Reload media list" aria-label="Refresh media list">
           🔄 Refresh
@@ -689,6 +714,66 @@
         </button>
       </div>
     </header>
+
+    <!-- Global Options Modal -->
+    <div id="optionsModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); z-index:1000; align-items:center; justify-content:center;">
+      <div class="modal-content" style="background:var(--ctp-mantle); border:1px solid var(--ctp-surface0); border-radius:12px; padding:1.5rem; width:90%; max-width:550px; display:flex; flex-direction:column; gap:1.25rem; box-shadow:0 10px 30px rgba(0,0,0,0.3); animation: slide-down 0.2s ease-out;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.75rem;">
+          <span style="font-weight:600; font-size:1.1rem; color:var(--ctp-text);">⚙️ Global Settings & Sources</span>
+          <button id="closeOptionsBtn" style="background:transparent; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:1.2rem; margin-left:auto; outline:none;" aria-label="Close settings">✕</button>
+        </div>
+        
+        <!-- Theme selection -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--ctp-base); padding:0.75rem; border-radius:8px; border:1px solid var(--ctp-surface0);">
+          <span style="font-weight:600; font-size:0.8rem; color:var(--ctp-text);">DASHBOARD THEME</span>
+          <select id="themeSelect" aria-label="Select colour theme" style="width:160px; height:34px; padding:0 0.5rem; background:var(--ctp-mantle); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; outline:none; cursor:pointer;">
+            <option value="mocha" selected>🌙 Mocha</option>
+            <option value="macchiato">🌆 Macchiato</option>
+            <option value="frappe">   🌤 Frappé</option>
+            <option value="latte">    ☀️ Latte</option>
+          </select>
+        </div>
+        
+        <!-- RSS Feeds configuration -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">RSS FEEDS OR SUBSTACK DOMAINS (ONE URL PER LINE)</div>
+          <textarea id="rssFeedsInput" style="width:100%; height:120px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0.5rem; font-family:monospace; font-size:0.75rem; resize:vertical; outline:none; line-height:1.4;" placeholder="http://feeds.bbci.co.uk/news/rss.xml&#10;https://pragmaticengineer.substack.com"></textarea>
+        </div>
+        
+        <!-- Medium tags configuration -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">MEDIUM TAGS, HANDLES OR PUBLICATION DOMAINS (COMMA-SEPARATED)</div>
+          <input type="text" id="mediumTagsInput" style="width:100%; height:36px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0.5rem; font-size:0.8rem; outline:none;" placeholder="terraform, @username, netflix-techblog.medium.com">
+        </div>
+
+        <!-- Action buttons -->
+        <div style="display:flex; justify-content:flex-end; align-items:center; gap:0.75rem; border-top:1px solid var(--ctp-surface0); padding-top:0.75rem;">
+          <button id="showLogsModalBtn" class="btn" style="background:var(--ctp-surface1); color:var(--ctp-text); margin-right:auto; display:flex; align-items:center; gap:0.35rem;">📋 View Logs</button>
+          <button id="cancelOptionsBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text);">Cancel</button>
+          <button id="saveOptionsBtn" class="btn btn-primary">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scraper Logs Popup Modal -->
+    <div id="logsModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); z-index:1010; align-items:center; justify-content:center;">
+      <div class="modal-content" style="background:var(--ctp-crust); border:1px solid var(--ctp-surface0); border-radius:12px; padding:1.5rem; width:95%; max-width:700px; display:flex; flex-direction:column; gap:1rem; box-shadow:0 10px 30px rgba(0,0,0,0.3); animation: slide-down 0.2s ease-out;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.75rem;">
+          <span style="font-weight:600; font-size:1.1rem; color:var(--ctp-text); display:flex; align-items:center; gap:0.4rem;">
+            <span style="width:10px; height:10px; border-radius:50%; background:var(--ctp-yellow); display:inline-block;" id="modalConsoleStatusDot"></span>
+            📋 Scraper Execution Logs
+          </span>
+          <button id="closeLogsModalBtn" style="background:transparent; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:1.2rem; margin-left:auto; outline:none;" aria-label="Close logs">✕</button>
+        </div>
+        
+        <pre id="modalConsoleLogOutput" style="margin:0; height:320px; overflow-y:auto; font-family:monospace; font-size:0.75rem; color:var(--ctp-text); line-height:1.4; white-space:pre-wrap; word-break:break-all; padding:0.5rem; background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:8px; scrollbar-width:thin;"></pre>
+        
+        <div style="display:flex; justify-content:flex-end; gap:0.75rem; border-top:1px solid var(--ctp-surface0); padding-top:0.75rem;">
+          <button id="modalLogsRefreshBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text); display:flex; align-items:center; gap:0.3rem;">🔄 Refresh</button>
+          <button id="closeLogsModalOkBtn" class="btn btn-primary">Close</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ── Status bar ── -->
     <div class="status-bar" role="status" aria-live="polite">
@@ -707,67 +792,28 @@
       </div>
     </div>
 
-    <!-- ── Pipeline & Voice Configuration Panel ── -->
-    <section class="section" id="settingsPanel" style="margin-bottom: 1.5rem;">
-      <div class="player-card" style="padding: 1.25rem; background: var(--ctp-mantle); border: 1px solid var(--ctp-surface0);">
-        <div style="font-weight:600; color:var(--ctp-text); margin-bottom: 1rem; display:flex; align-items:center; gap:0.5rem; font-size: 0.9rem;">
-          <span>⚙️ Pipeline & Voice Configuration</span>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem;">
-          
-          <!-- Voice Settings -->
-          <div>
-            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">📻 SHORT BRIEFING VOICE</div>
-            <select id="voiceShortSelect" style="width:100%; height: 36px; padding: 0.4rem 0.75rem;">
-              <option value="en-GB-SoniaNeural" selected>🇬🇧 Sonia (Female)</option>
-              <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
-              <option value="en-GB-LibbyNeural">🇬🇧 Libby (Female)</option>
-              <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
-              <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
-              <option value="en-AU-NatashaNeural">🇦🇺 Natasha (Female)</option>
-            </select>
-          </div>
-          
-          <div>
-            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">🎧 LONG PODCAST VOICE</div>
-            <select id="voiceLongSelect" style="width:100%; height: 36px; padding: 0.4rem 0.75rem;">
-              <option value="en-US-GuyNeural" selected>🇺🇸 Guy (Male)</option>
-              <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
-              <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
-              <option value="en-US-BrianNeural">🇺🇸 Brian (Male)</option>
-              <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
-              <option value="en-AU-WilliamNeural">🇦🇺 William (Male)</option>
-            </select>
-          </div>
-
-          <!-- Source curation settings -->
-          <div>
-            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.5rem; font-weight:600; letter-spacing: 0.05em;">📻 BRIEFING SOURCES</div>
-            <div style="display:flex; flex-direction:column; gap:0.45rem; font-size:0.8rem;">
-              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
-                <input type="checkbox" id="srcShortBbc" checked style="cursor:pointer; width:15px; height:15px;"> BBC News
-              </label>
-              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
-                <input type="checkbox" id="srcShortMedium" style="cursor:pointer; width:15px; height:15px;"> Medium/terraform
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <div style="font-size:0.72rem; color:var(--ctp-subtext0); margin-bottom:0.5rem; font-weight:600; letter-spacing: 0.05em;">🎧 PODCAST SOURCES</div>
-            <div style="display:flex; flex-direction:column; gap:0.45rem; font-size:0.8rem;">
-              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
-                <input type="checkbox" id="srcLongBbc" checked style="cursor:pointer; width:15px; height:15px;"> BBC News
-              </label>
-              <label style="display:flex; align-items:center; gap:0.5rem; color:var(--ctp-text); cursor:pointer;">
-                <input type="checkbox" id="srcLongMedium" checked style="cursor:pointer; width:15px; height:15px;"> Medium/terraform
-              </label>
-            </div>
-          </div>
-
-        </div>
+    <!-- Scraper Failure Banner -->
+    <div id="scrapeFailureBanner" style="display:none; margin-bottom:1.5rem; background:color-mix(in srgb, var(--ctp-red) 10%, transparent); border:1px solid var(--ctp-red); padding:1rem; border-radius:12px;" role="alert">
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; color:var(--ctp-red); font-weight:600; margin-bottom:0.5rem;">
+        <span style="display:flex; align-items:center; gap:0.35rem;">⚠️ Scraper Pipeline Failed!</span>
+        <button id="dismissScrapeFailureBtn" style="background:none; border:none; color:var(--ctp-red); font-size:0.9rem; cursor:pointer; font-weight:bold; padding:0 0.25rem;">✕</button>
       </div>
-    </section>
+      <div style="font-size:0.75rem; color:var(--ctp-text); line-height:1.4;">
+        An error occurred during the last scraping run. Expand the execution logs below to see the traceback.
+      </div>
+    </div>
+
+    <!-- Scraper Log Terminal -->
+    <div id="scraperLogConsole" style="display:none; margin-bottom:1.5rem; background:var(--ctp-crust); border:1px solid var(--ctp-surface0); border-radius:12px; padding:0.75rem; overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; font-size:0.7rem; color:var(--ctp-subtext0); text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.4rem;">
+        <span style="font-weight:600; display:flex; align-items:center; gap:0.35rem;">
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--ctp-yellow); display:inline-block;" id="consoleStatusDot"></span>
+          Execution Logs
+        </span>
+        <button id="toggleConsoleBtn" style="background:none; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:0.7rem; outline:none;">Collapse</button>
+      </div>
+      <pre id="consoleLogOutput" style="margin:0; max-height:180px; overflow-y:auto; font-family:monospace; font-size:0.7rem; color:var(--ctp-text); line-height:1.4; white-space:pre-wrap; word-break:break-all; padding:0.25rem 0; scrollbar-width:thin;"></pre>
+    </div>
 
     <!-- ════════════════════════════════════════════════════════
          AUDIO PLAYERS & LIBRARY PLAYLIST
@@ -783,7 +829,7 @@
             <div class="player-duration" id="playlistSubtitle">Select edition to load media</div>
           </div>
         </div>
-        <div id="audioPlaylist" style="display:flex; flex-direction:column; gap:0.5rem; max-height:240px; overflow-y:auto; padding-right:4px; flex:1;">
+        <div id="audioPlaylist" style="display:flex; flex-direction:column; gap:0.5rem; max-height:480px; overflow-y:auto; padding-right:8px; flex:1;">
           <!-- Playlist items injected by JS -->
           <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
           <div class="skeleton" style="height:44px; border-radius:10px; margin-bottom:0.5rem;"></div>
@@ -793,13 +839,49 @@
 
       <!-- Flash Briefing -->
       <div class="player-card radio" id="radioCard">
-        <div class="player-header">
+        <div class="player-header" style="display:flex; justify-content:space-between; align-items:flex-start; width:100%;">
           <div class="player-meta">
             <span class="player-type radio">📻 Flash Briefing</span>
             <div class="player-title">Daily Radio Summary</div>
             <div class="player-duration" id="radioDuration">≤ 30 min · 500–2,000 words</div>
           </div>
+          <button class="btn-cog" onclick="toggleCardSettings('radio')" aria-label="Configure Short Briefing">⚙️</button>
         </div>
+
+        <!-- Collapsible settings drawer -->
+        <div id="radioSettings" class="card-settings-drawer" style="display:none; margin:0.75rem 0; padding:0.85rem; background:var(--ctp-mantle); border-radius:8px; font-size:0.8rem; flex-direction:column; gap:0.75rem;">
+          <div style="font-weight:600; color:var(--ctp-text); border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.4rem; margin-bottom:0.25rem;">📻 Short Briefing Settings</div>
+          
+          <!-- Voice selection and preview -->
+          <div>
+            <div style="font-size:0.7rem; color:var(--ctp-subtext0); margin-bottom:0.3rem; font-weight:600; letter-spacing: 0.05em;">VOICE MODEL</div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="voiceShortSelect" style="flex:1; height: 32px; padding: 0.25rem 0.5rem; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; outline:none;">
+                <option value="en-GB-SoniaNeural" selected>🇬🇧 Sonia (Female)</option>
+                <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
+                <option value="en-GB-LibbyNeural">🇬🇧 Libby (Female)</option>
+                <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
+                <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
+                <option value="en-AU-NatashaNeural">🇦🇺 Natasha (Female)</option>
+              </select>
+              <button onclick="playVoiceSample('radio')" class="btn" style="height:32px; padding:0 0.75rem; font-size:0.75rem; border-radius:6px; background:var(--ctp-surface0); border:1px solid var(--ctp-surface1); color:var(--ctp-text); cursor:pointer; font-weight:500;" onmouseover="this.style.background='var(--ctp-surface1)'" onmouseout="this.style.background='var(--ctp-surface0)'">▶ Example</button>
+            </div>
+          </div>
+
+          <!-- Source curation selection -->
+          <div>
+            <div style="font-size:0.7rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">INCLUDED SOURCES</div>
+            <div style="margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem;">
+              <label style="display:flex; align-items:center; gap:0.4rem; color:var(--ctp-text); cursor:pointer; font-weight:600;">
+                <input type="checkbox" id="selectAllShort" style="cursor:pointer; width:14px; height:14px;"> Select All
+              </label>
+            </div>
+            <div id="shortSourcesContainer" style="display:flex; flex-direction:column; gap:0.45rem; max-height:120px; overflow-y:auto; padding-right:4px; border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.5rem; background:var(--ctp-base);">
+              <!-- Dynamic checkboxes rendered here -->
+            </div>
+          </div>
+        </div>
+
         <div id="radioContent">
           <div class="unavailable-state">
             <div class="icon">🔇</div>
@@ -809,14 +891,51 @@
       </div>
 
       <!-- Long Podcast -->
+      <!-- Long Podcast -->
       <div class="player-card podcast" id="podcastCard">
-        <div class="player-header">
+        <div class="player-header" style="display:flex; justify-content:space-between; align-items:flex-start; width:100%;">
           <div class="player-meta">
             <span class="player-type podcast">🎧 Full Podcast</span>
             <div class="player-title">Deep-Dive Digest</div>
             <div class="player-duration" id="podcastDuration">Conversational long-form audio</div>
           </div>
+          <button class="btn-cog" onclick="toggleCardSettings('podcast')" aria-label="Configure Podcast Settings">⚙️</button>
         </div>
+
+        <!-- Collapsible settings drawer -->
+        <div id="podcastSettings" class="card-settings-drawer" style="display:none; margin:0.75rem 0; padding:0.85rem; background:var(--ctp-mantle); border-radius:8px; font-size:0.8rem; flex-direction:column; gap:0.75rem;">
+          <div style="font-weight:600; color:var(--ctp-text); border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.4rem; margin-bottom:0.25rem;">🎧 Podcast Settings</div>
+          
+          <!-- Voice selection and preview -->
+          <div>
+            <div style="font-size:0.7rem; color:var(--ctp-subtext0); margin-bottom:0.3rem; font-weight:600; letter-spacing: 0.05em;">VOICE MODEL</div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="voiceLongSelect" style="flex:1; height: 32px; padding: 0.25rem 0.5rem; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; outline:none;">
+                <option value="en-US-GuyNeural" selected>🇺🇸 Guy (Male)</option>
+                <option value="en-US-JennyNeural">🇺🇸 Jenny (Female)</option>
+                <option value="en-US-AriaNeural">🇺🇸 Aria (Female)</option>
+                <option value="en-US-BrianNeural">🇺🇸 Brian (Male)</option>
+                <option value="en-GB-RyanNeural">🇬🇧 Ryan (Male)</option>
+                <option value="en-AU-WilliamNeural">🇦🇺 William (Male)</option>
+              </select>
+              <button onclick="playVoiceSample('podcast')" class="btn" style="height:32px; padding:0 0.75rem; font-size:0.75rem; border-radius:6px; background:var(--ctp-surface0); border:1px solid var(--ctp-surface1); color:var(--ctp-text); cursor:pointer; font-weight:500;" onmouseover="this.style.background='var(--ctp-surface1)'" onmouseout="this.style.background='var(--ctp-surface0)'">▶ Example</button>
+            </div>
+          </div>
+
+          <!-- Source curation selection -->
+          <div>
+            <div style="font-size:0.7rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; font-weight:600; letter-spacing: 0.05em;">INCLUDED SOURCES</div>
+            <div style="margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem;">
+              <label style="display:flex; align-items:center; gap:0.4rem; color:var(--ctp-text); cursor:pointer; font-weight:600;">
+                <input type="checkbox" id="selectAllLong" style="cursor:pointer; width:14px; height:14px;"> Select All
+              </label>
+            </div>
+            <div id="longSourcesContainer" style="display:flex; flex-direction:column; gap:0.45rem; max-height:120px; overflow-y:auto; padding-right:4px; border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.5rem; background:var(--ctp-base);">
+              <!-- Dynamic checkboxes rendered here -->
+            </div>
+          </div>
+        </div>
+
         <div id="podcastContent">
           <div class="unavailable-state">
             <div class="icon">🔇</div>
@@ -893,6 +1012,19 @@
     const refreshBtn       = $('refreshBtn');
     const scrapeBtn        = $('scrapeBtn');
     const scrapeProgressBar = $('scrapeProgressBar');
+    const scrapeFailureBanner = $('scrapeFailureBanner');
+    const dismissScrapeFailureBtn = $('dismissScrapeFailureBtn');
+    const scraperLogConsole = $('scraperLogConsole');
+    const consoleLogOutput = $('consoleLogOutput');
+    const toggleConsoleBtn = $('toggleConsoleBtn');
+    const consoleStatusDot = $('consoleStatusDot');
+    const showLogsModalBtn = $('showLogsModalBtn');
+    const logsModal = $('logsModal');
+    const closeLogsModalBtn = $('closeLogsModalBtn');
+    const modalConsoleLogOutput = $('modalConsoleLogOutput');
+    const modalLogsRefreshBtn = $('modalLogsRefreshBtn');
+    const closeLogsModalOkBtn = $('closeLogsModalOkBtn');
+    const modalConsoleStatusDot = $('modalConsoleStatusDot');
     const statusDot        = $('statusDot');
     const statusText       = $('statusText');
     const audioPlaylist    = $('audioPlaylist');
@@ -908,10 +1040,6 @@
     const playlistSubtitle = $('playlistSubtitle');
     const voiceShortSelect = $('voiceShortSelect');
     const voiceLongSelect  = $('voiceLongSelect');
-    const srcShortBbc      = $('srcShortBbc');
-    const srcShortMedium   = $('srcShortMedium');
-    const srcLongBbc       = $('srcLongBbc');
-    const srcLongMedium    = $('srcLongMedium');
 
     let scrapePollingInterval = null;
     let isScrapingActive = false;
@@ -929,29 +1057,288 @@
     applyTheme(localStorage.getItem('ctp-theme') || 'mocha');
 
     // ── Pipeline Settings Persistence ──────────────────────────
+    let currentConfig = { rss_feeds: [], medium_tags: [] };
+
     function loadSettings() {
       voiceShortSelect.value = localStorage.getItem('voice_short') || 'en-GB-SoniaNeural';
       voiceLongSelect.value  = localStorage.getItem('voice_long')  || 'en-US-GuyNeural';
-      srcShortBbc.checked    = localStorage.getItem('src_short_bbc') !== 'false';
-      srcShortMedium.checked = localStorage.getItem('src_short_medium') === 'true';
-      srcLongBbc.checked     = localStorage.getItem('src_long_bbc') !== 'false';
-      srcLongMedium.checked  = localStorage.getItem('src_long_medium') !== 'false';
+
+      const savedShort = localStorage.getItem('sources_short');
+      const savedLong = localStorage.getItem('sources_long');
+
+      document.querySelectorAll('#shortSourcesContainer input[type="checkbox"]').forEach(cb => {
+        if (savedShort !== null) {
+          cb.checked = savedShort.split(',').includes(cb.value);
+        } else {
+          cb.checked = true;
+        }
+      });
+
+      document.querySelectorAll('#longSourcesContainer input[type="checkbox"]').forEach(cb => {
+        if (savedLong !== null) {
+          cb.checked = savedLong.split(',').includes(cb.value);
+        } else {
+          cb.checked = true;
+        }
+      });
+
+      updateSelectAllState('short');
+      updateSelectAllState('long');
     }
 
     function saveSettings() {
       localStorage.setItem('voice_short', voiceShortSelect.value);
       localStorage.setItem('voice_long', voiceLongSelect.value);
-      localStorage.setItem('src_short_bbc', srcShortBbc.checked);
-      localStorage.setItem('src_short_medium', srcShortMedium.checked);
-      localStorage.setItem('src_long_bbc', srcLongBbc.checked);
-      localStorage.setItem('src_long_medium', srcLongMedium.checked);
+
+      const shortChecked = Array.from(document.querySelectorAll('#shortSourcesContainer input[type="checkbox"]:checked')).map(cb => cb.value);
+      localStorage.setItem('sources_short', shortChecked.join(','));
+
+      const longChecked = Array.from(document.querySelectorAll('#longSourcesContainer input[type="checkbox"]:checked')).map(cb => cb.value);
+      localStorage.setItem('sources_long', longChecked.join(','));
     }
 
-    [voiceShortSelect, voiceLongSelect, srcShortBbc, srcShortMedium, srcLongBbc, srcLongMedium].forEach(el => {
+    [voiceShortSelect, voiceLongSelect].forEach(el => {
       el.addEventListener('change', saveSettings);
     });
 
-    loadSettings();
+    // ── Card-level settings and TTS Preview ─────────────────────
+    let activeAudioSample = null;
+
+    window.toggleCardSettings = function(type) {
+      const drawer = $(`${type}Settings`);
+      const content = $(`${type}Content`);
+      if (!drawer) return;
+      if (drawer.style.display === 'none') {
+        drawer.style.display = 'flex';
+        if (content) content.style.display = 'none';
+      } else {
+        drawer.style.display = 'none';
+        if (content) content.style.display = 'block';
+      }
+    };
+
+    window.playVoiceSample = function(type) {
+      const select = type === 'radio' ? voiceShortSelect : voiceLongSelect;
+      const voice = select.value;
+
+      if (activeAudioSample) {
+        activeAudioSample.pause();
+        activeAudioSample = null;
+      }
+
+      const name = voice.split('-').pop().replace('Neural', '');
+      toast(`Requesting sample for ${name}…`, 'info');
+
+      const audio = new Audio(`/api/tts/preview?voice=${encodeURIComponent(voice)}`);
+      activeAudioSample = audio;
+
+      audio.play().then(() => {
+        toast(`Playing sample for ${name}`, 'success');
+      }).catch(err => {
+        console.error('Failed to play TTS preview:', err);
+        toast('Failed to load or play voice sample.', 'error');
+      });
+    };
+
+    // ── Source Checkboxes Generator ─────────────────────────────
+    async function fetchAndRenderConfig() {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) throw new Error('Failed to fetch config');
+        currentConfig = await res.json();
+
+        const sources = [];
+        currentConfig.rss_feeds.forEach(feed => {
+          sources.push(feed.name);
+        });
+        currentConfig.medium_tags.forEach(tag => {
+          sources.push(`Medium/tags/${tag}`);
+        });
+
+        renderSourceCheckboxes('short', sources);
+        renderSourceCheckboxes('long', sources);
+
+        loadSettings();
+      } catch (err) {
+        console.error('Error fetching config:', err);
+        toast('Failed to load sources list from server.', 'error');
+      }
+    }
+
+    function renderSourceCheckboxes(type, sources) {
+      const container = $(`${type}SourcesContainer`);
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (sources.length === 0) {
+        container.innerHTML = '<div style="color:var(--ctp-subtext0); font-style:italic;">No sources configured</div>';
+        return;
+      }
+
+      sources.forEach(src => {
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '0.4rem';
+        label.style.color = 'var(--ctp-text)';
+        label.style.cursor = 'pointer';
+        label.style.fontSize = '0.75rem';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = src;
+        cb.style.cursor = 'pointer';
+        cb.style.width = '14px';
+        cb.style.height = '14px';
+        cb.addEventListener('change', () => {
+          saveSettings();
+          updateSelectAllState(type);
+        });
+
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(src));
+        container.appendChild(label);
+      });
+    }
+
+    function updateSelectAllState(type) {
+      const selectAll = type === 'short' ? $('selectAllShort') : $('selectAllLong');
+      const containerId = type === 'short' ? 'shortSourcesContainer' : 'longSourcesContainer';
+      const cbs = document.querySelectorAll(`#${containerId} input[type="checkbox"]`);
+      if (cbs.length === 0) return;
+
+      const allChecked = Array.from(cbs).every(cb => cb.checked);
+      selectAll.checked = allChecked;
+    }
+
+    $('selectAllShort').addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      document.querySelectorAll('#shortSourcesContainer input[type="checkbox"]').forEach(cb => {
+        cb.checked = checked;
+      });
+      saveSettings();
+    });
+
+    $('selectAllLong').addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      document.querySelectorAll('#longSourcesContainer input[type="checkbox"]').forEach(cb => {
+        cb.checked = checked;
+      });
+      saveSettings();
+    });
+
+    // ── Global Options Modal ────────────────────────────────────
+    const optionsModal = $('optionsModal');
+
+    window.toggleOptionsModal = function() {
+      if (optionsModal.style.display === 'none' || !optionsModal.style.display) {
+        const feedsUrls = currentConfig.rss_feeds.map(f => typeof f === 'string' ? f : f.url).join('\n');
+        $('rssFeedsInput').value = feedsUrls;
+        $('mediumTagsInput').value = currentConfig.medium_tags.join(', ');
+        optionsModal.style.display = 'flex';
+      } else {
+        optionsModal.style.display = 'none';
+      }
+    };
+
+    $('optionsBtn').addEventListener('click', toggleOptionsModal);
+    $('closeOptionsBtn').addEventListener('click', toggleOptionsModal);
+    $('cancelOptionsBtn').addEventListener('click', toggleOptionsModal);
+
+    $('saveOptionsBtn').addEventListener('click', async () => {
+      const feedsText = $('rssFeedsInput').value.trim();
+      const tagsText = $('mediumTagsInput').value.trim();
+
+      const rss_feeds = feedsText.split('\n')
+        .map(url => url.trim())
+        .filter(url => url.length > 0);
+
+      const medium_tags = tagsText.split(',')
+        .map(tag => tag.trim())
+        .filter(tag => tag.length > 0);
+
+      const payload = {
+        rss_feeds: rss_feeds.map(url => {
+          try {
+            const hostname = new URL(url).hostname;
+            const friendly = hostname.replace('www.', '');
+            return { name: friendly, url: url };
+          } catch(e) {
+            return { name: "News Feed", url: url };
+          }
+        }),
+        medium_tags: medium_tags
+      };
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Failed to save config');
+
+        toast('Configuration saved successfully', 'success');
+        optionsModal.style.display = 'none';
+
+        await fetchAndRenderConfig();
+      } catch (err) {
+        console.error('Error saving config:', err);
+        toast('Failed to save configuration to server.', 'error');
+      }
+    });
+
+    // ── Logs Modal Overlay ──────────────────────────────────────
+    let logsModalInterval = null;
+
+    async function fetchModalLogs() {
+      try {
+        const resp = await fetch('/api/scrape/logs');
+        if (!resp.ok) return;
+        const lines = await resp.json();
+        const text = lines.join('\n');
+        if (modalConsoleLogOutput.textContent !== text) {
+          modalConsoleLogOutput.textContent = text;
+          modalConsoleLogOutput.scrollTop = modalConsoleLogOutput.scrollHeight;
+        }
+        
+        // Also fetch status to set the dot color
+        const statusResp = await fetch('/api/scrape/status');
+        if (statusResp.ok) {
+          const data = await statusResp.json();
+          if (data.running) {
+            modalConsoleStatusDot.style.background = 'var(--ctp-yellow)';
+          } else if (data.last_run_success) {
+            modalConsoleStatusDot.style.background = 'var(--ctp-green)';
+          } else {
+            modalConsoleStatusDot.style.background = 'var(--ctp-red)';
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch modal logs:', err);
+      }
+    }
+
+    function openLogsModal() {
+      logsModal.style.display = 'flex';
+      fetchModalLogs();
+      
+      if (logsModalInterval) clearInterval(logsModalInterval);
+      logsModalInterval = setInterval(fetchModalLogs, 2000);
+    }
+
+    function closeLogsModal() {
+      logsModal.style.display = 'none';
+      if (logsModalInterval) {
+        clearInterval(logsModalInterval);
+        logsModalInterval = null;
+      }
+    }
+
+    showLogsModalBtn.addEventListener('click', openLogsModal);
+    closeLogsModalBtn.addEventListener('click', closeLogsModal);
+    closeLogsModalOkBtn.addEventListener('click', closeLogsModal);
+    modalLogsRefreshBtn.addEventListener('click', fetchModalLogs);
 
     // ── Toast ──────────────────────────────────────────────────
     function toast(message, type = '') {
@@ -966,6 +1353,16 @@
     function setStatus(msg, state = '') {
       statusText.textContent = msg;
       statusDot.className = `status-dot ${state}`;
+    }
+
+    function updateStatusBar() {
+      if (isScrapingActive) return;
+      const newCount = mediaData.filter(item => isNewEdition(item.date)).length;
+      if (newCount > 0) {
+        setStatus(`${newCount} new edition(s) available`, 'active');
+      } else {
+        setStatus('All editions read · System up to date', '');
+      }
     }
 
     // ── Format YYYYMMDD → human readable ──────────────────────
@@ -1037,7 +1434,7 @@
         }
 
         renderPlaylist();
-        if (!silent) setStatus(`${mediaData.length} edition(s) available`, 'active');
+        if (!silent) updateStatusBar();
 
         // Auto-select the most recent date if nothing is selected yet
         if (!activeDate && mediaData.length > 0) {
@@ -1107,8 +1504,9 @@
       if (!clicked.includes(dateStr)) {
         clicked.push(dateStr);
         localStorage.setItem('clickedEditions', JSON.stringify(clicked));
-        // Re-render playlist to clear badge
+        // Re-render playlist and update status bar
         renderPlaylist();
+        updateStatusBar();
       }
 
       playlistSubtitle.textContent = `Active: ${formatDate(dateStr)}`;
@@ -1284,6 +1682,33 @@
         h2: { 'color': isDark ? '#89b4fa' : '#1e66f5', 'margin-top': '2em' },
         a:  { 'color': isDark ? '#74c7ec' : '#209fb5' },
         p:  { 'text-align': 'justify', 'margin': '0.75em 0' },
+        pre: {
+          'background-color': isDark ? '#11111b' : '#f6f8fa',
+          'color': isDark ? '#cdd6f4' : '#24292e',
+          'padding': '1em',
+          'border-radius': '6px',
+          'border': isDark ? '1px solid #45475a' : '1px solid #e1e4e8',
+          'overflow-x': 'auto',
+          'font-family': "'Courier New', Courier, monospace",
+          'font-size': '0.85em',
+          'line-height': '1.45',
+          'margin': '1.5em 0'
+        },
+        code: {
+          'font-family': "'Courier New', Courier, monospace",
+          'background-color': isDark ? '#11111b' : '#f6f8fa',
+          'color': isDark ? '#f38ba8' : '#d73a49',
+          'padding': '0.2em 0.4em',
+          'border-radius': '3px',
+          'font-size': '0.85em'
+        },
+        'pre code': {
+          'background-color': 'transparent',
+          'color': 'inherit',
+          'padding': '0',
+          'border-radius': '0',
+          'font-size': 'inherit'
+        }
       });
       epubRendition.themes.select('ctp');
     }
@@ -1335,12 +1760,14 @@
 
       // Build source list filters
       const shortSources = [];
-      if (srcShortBbc.checked) shortSources.push("BBC News");
-      if (srcShortMedium.checked) shortSources.push("Medium/terraform");
+      document.querySelectorAll('#shortSourcesContainer input[type="checkbox"]:checked').forEach(cb => {
+        shortSources.push(cb.value);
+      });
 
       const longSources = [];
-      if (srcLongBbc.checked) longSources.push("BBC News");
-      if (srcLongMedium.checked) longSources.push("Medium/terraform");
+      document.querySelectorAll('#longSourcesContainer input[type="checkbox"]:checked').forEach(cb => {
+        longSources.push(cb.value);
+      });
 
       if (shortSources.length === 0 && longSources.length === 0) {
         toast('Select at least one source for short briefing or long podcast.', 'error');
@@ -1374,6 +1801,38 @@
     scrapeBtn.addEventListener('click', triggerScraper);
 
     // ── Polling Scraper Status ──────────────────────────────────
+    let isConsoleCollapsed = false;
+    toggleConsoleBtn.addEventListener('click', () => {
+      isConsoleCollapsed = !isConsoleCollapsed;
+      if (isConsoleCollapsed) {
+        consoleLogOutput.style.display = 'none';
+        toggleConsoleBtn.innerHTML = 'Expand';
+      } else {
+        consoleLogOutput.style.display = 'block';
+        toggleConsoleBtn.innerHTML = 'Collapse';
+        consoleLogOutput.scrollTop = consoleLogOutput.scrollHeight;
+      }
+    });
+
+    dismissScrapeFailureBtn.addEventListener('click', () => {
+      scrapeFailureBanner.style.display = 'none';
+    });
+
+    async function fetchScraperLogs() {
+      try {
+        const resp = await fetch('/api/scrape/logs');
+        if (!resp.ok) return;
+        const lines = await resp.json();
+        const newText = lines.join('\n');
+        if (consoleLogOutput.textContent !== newText) {
+          consoleLogOutput.textContent = newText;
+          consoleLogOutput.scrollTop = consoleLogOutput.scrollHeight;
+        }
+      } catch (err) {
+        console.error('Failed to fetch scraper logs:', err);
+      }
+    }
+
     async function checkScraperStatus() {
       try {
         const resp = await fetch('/api/scrape/status');
@@ -1385,16 +1844,48 @@
           scrapeBtn.disabled = true;
           scrapeBtn.innerHTML = '⚙️ Running...';
           scrapeProgressBar.style.display = 'block';
+          scrapeFailureBanner.style.display = 'none';
+          scraperLogConsole.style.display = 'block';
+          consoleStatusDot.style.background = 'var(--ctp-yellow)';
           setStatus('News Station is actively compiling & curating...', 'loading');
+          
+          await fetchScraperLogs();
         } else {
-          // If it was running but just stopped, reload the media library
+          // If it was running but just stopped
           if (isScrapingActive) {
             isScrapingActive = false;
             scrapeBtn.disabled = false;
             scrapeBtn.innerHTML = '⚡ Run Scraper';
             scrapeProgressBar.style.display = 'none';
-            toast('Daily news run completed!', 'success');
-            loadMediaList(false);
+            
+            await fetchScraperLogs();
+            
+            if (data.last_run_success) {
+              scraperLogConsole.style.display = 'none';
+              scrapeFailureBanner.style.display = 'none';
+              toast('Daily news run completed successfully!', 'success');
+              loadMediaList(false);
+            } else {
+              scrapeFailureBanner.style.display = 'block';
+              scraperLogConsole.style.display = 'block';
+              consoleStatusDot.style.background = 'var(--ctp-red)';
+              if (isConsoleCollapsed) {
+                isConsoleCollapsed = false;
+                consoleLogOutput.style.display = 'block';
+                toggleConsoleBtn.innerHTML = 'Collapse';
+              }
+              toast('Daily news run failed!', 'error');
+            }
+          } else {
+            // Idle state on initial load
+            if (!data.last_run_success) {
+              scrapeFailureBanner.style.display = 'block';
+              scraperLogConsole.style.display = 'block';
+              consoleStatusDot.style.background = 'var(--ctp-red)';
+              await fetchScraperLogs();
+            } else {
+              scrapeFailureBanner.style.display = 'none';
+            }
           }
         }
       } catch (err) {
@@ -1406,6 +1897,7 @@
     setInterval(checkScraperStatus, 3000);
 
     // ── Bootstrap ─────────────────────────────────────────────
+    fetchAndRenderConfig();
     loadMediaList(false);
     checkScraperStatus();
 

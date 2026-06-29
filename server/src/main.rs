@@ -38,6 +38,8 @@ use tracing::{error, info, warn};
 struct AppState {
     data_dir: Arc<PathBuf>,
     is_scraping: Arc<AtomicBool>,
+    scraper_logs: Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+    last_run_success: Arc<AtomicBool>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -55,6 +57,88 @@ struct MediaEntry {
     radio:   Option<String>,
     /// Filename of the long podcast MP3, if generated
     podcast: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RssFeed {
+    name: String,
+    url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppConfig {
+    rss_feeds: Vec<RssFeed>,
+    medium_tags: Vec<String>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            rss_feeds: vec![
+                RssFeed {
+                    name: "BBC News".to_string(),
+                    url: "http://feeds.bbci.co.uk/news/rss.xml".to_string(),
+                },
+                RssFeed {
+                    name: "Azure DevOps Blog".to_string(),
+                    url: "https://devblogs.microsoft.com/devops/feed/".to_string(),
+                },
+                RssFeed {
+                    name: "GitHub Engineering Blog".to_string(),
+                    url: "https://github.blog/feed/".to_string(),
+                },
+                RssFeed {
+                    name: "CNCF Blog".to_string(),
+                    url: "https://www.cncf.io/feed/".to_string(),
+                },
+                RssFeed {
+                    name: "Kubernetes Blog".to_string(),
+                    url: "https://kubernetes.io/feed.xml".to_string(),
+                },
+                RssFeed {
+                    name: "Google Cloud Tech Blog".to_string(),
+                    url: "https://cloudblog.withgoogle.com/rss".to_string(),
+                },
+                RssFeed {
+                    name: "HashiCorp Blog".to_string(),
+                    url: "https://www.hashicorp.com/blog/feed.xml".to_string(),
+                },
+                RssFeed {
+                    name: "Ansible Blog".to_string(),
+                    url: "https://www.ansible.com/blog/rss.xml".to_string(),
+                },
+                RssFeed {
+                    name: "Red Hat Blog".to_string(),
+                    url: "https://www.redhat.com/en/blog/rss.xml".to_string(),
+                },
+                RssFeed {
+                    name: "NGINX Blog".to_string(),
+                    url: "https://www.nginx.com/blog/feed/".to_string(),
+                },
+                RssFeed {
+                    name: "Canonical Ubuntu Blog".to_string(),
+                    url: "https://ubuntu.com/blog/feed".to_string(),
+                },
+                RssFeed {
+                    name: "Let's Do DevOps".to_string(),
+                    url: "https://letsdodevops.substack.com/feed".to_string(),
+                },
+                RssFeed {
+                    name: "DevOps Daily".to_string(),
+                    url: "https://devopsdaily.substack.com/feed".to_string(),
+                },
+                RssFeed {
+                    name: "DevOps Bulletin".to_string(),
+                    url: "https://devopsbulletin.substack.com/feed".to_string(),
+                },
+                RssFeed {
+                    name: "DevOpsCube".to_string(),
+                    url: "https://devopscube.com/feed/".to_string(),
+                },
+            ],
+            medium_tags: vec!["terraform".to_string()],
+        }
+    }
 }
 
 /// Top-level API response wrapping an ordered list of media entries.
@@ -136,9 +220,40 @@ async fn handle_list_media(
     Ok(Json(MediaListResponse { dates }))
 }
 
+/// `GET /api/config` — read the current sources configuration from config.json or return defaults.
+async fn handle_get_config(
+    State(state): State<AppState>,
+) -> Json<AppConfig> {
+    let path = state.data_dir.join("config.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                return Json(config);
+            }
+        }
+    }
+    Json(AppConfig::default())
+}
+
+/// `POST /api/config` — save the new sources configuration to config.json.
+async fn handle_post_config(
+    State(state): State<AppState>,
+    Json(payload): Json<AppConfig>,
+) -> Result<StatusCode, StatusCode> {
+    let path = state.data_dir.join("config.json");
+    if let Ok(content) = serde_json::to_string_pretty(&payload) {
+        if std::fs::write(&path, content).is_ok() {
+            info!("Successfully saved new configuration to {:?}", path);
+            return Ok(StatusCode::OK);
+        }
+    }
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 #[derive(Serialize)]
 struct ScrapeStatus {
     running: bool,
+    last_run_success: bool,
 }
 
 /// `GET /api/scrape/status` — returns whether the scraper is currently running.
@@ -146,8 +261,17 @@ async fn handle_scrape_status(
     State(state): State<AppState>,
 ) -> Json<ScrapeStatus> {
     Json(ScrapeStatus {
-        running: state.is_scraping.load(Ordering::Relaxed),
+        running: state.is_scraping.load(Ordering::SeqCst),
+        last_run_success: state.last_run_success.load(Ordering::SeqCst),
     })
+}
+
+/// `GET /api/scrape/logs` — returns the current array of log lines.
+async fn handle_scrape_logs(
+    State(state): State<AppState>,
+) -> Json<Vec<String>> {
+    let logs = state.scraper_logs.lock().await;
+    Json(logs.iter().cloned().collect())
 }
 
 use axum::extract::Query;
@@ -173,7 +297,7 @@ async fn handle_scrape_trigger(
     let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
     let scraper_script = std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
 
-    let is_scraping = Arc::clone(&state.is_scraping);
+    let state_clone = state.clone();
     tokio::spawn(async move {
         info!("Spawning background scraper process: {} {}", python_bin, scraper_script);
         
@@ -193,28 +317,189 @@ async fn handle_scrape_trigger(
         if let Some(ls) = params.long_sources {
             cmd.env("LONG_SOURCES", ls);
         }
+
+        // Pipe stdout & stderr to capture logs in real time
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        // Clear logs at start of a new run
+        {
+            let mut logs = state_clone.scraper_logs.lock().await;
+            logs.clear();
+            logs.push_back("--- Starting news scraper pipeline ---".to_string());
+        }
+        state_clone.last_run_success.store(true, Ordering::SeqCst);
         
         match cmd.spawn() {
             Ok(mut child) => {
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+                
+                const MAX_LOG_LINES: usize = 150;
+                
+                // Spawn task to read stdout
+                let logs_stdout = Arc::clone(&state_clone.scraper_logs);
+                if let Some(out) = stdout {
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(out).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let mut l = logs_stdout.lock().await;
+                            l.push_back(line);
+                            if l.len() > MAX_LOG_LINES {
+                                l.pop_front();
+                            }
+                        }
+                    });
+                }
+                
+                // Spawn task to read stderr
+                let logs_stderr = Arc::clone(&state_clone.scraper_logs);
+                if let Some(err) = stderr {
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(err).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let mut l = logs_stderr.lock().await;
+                            l.push_back(format!("[ERROR] {}", line));
+                            if l.len() > MAX_LOG_LINES {
+                                l.pop_front();
+                            }
+                        }
+                    });
+                }
+
                 match child.wait().await {
                     Ok(status) => {
                         info!("Background scraper completed with status: {:?}", status);
+                        let success = status.success();
+                        state_clone.last_run_success.store(success, Ordering::SeqCst);
+                        let mut l = state_clone.scraper_logs.lock().await;
+                        if success {
+                            l.push_back("--- Pipeline completed successfully ---".to_string());
+                        } else {
+                            l.push_back(format!("--- Pipeline failed with exit status: {:?} ---", status));
+                        }
                     }
                     Err(e) => {
                         error!("Failed to wait for background scraper process: {}", e);
+                        state_clone.last_run_success.store(false, Ordering::SeqCst);
+                        let mut l = state_clone.scraper_logs.lock().await;
+                        l.push_back(format!("--- Error waiting for pipeline: {} ---", e));
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to spawn background scraper process ({} {}): {}", python_bin, scraper_script, e);
+                state_clone.last_run_success.store(false, Ordering::SeqCst);
+                let mut l = state_clone.scraper_logs.lock().await;
+                l.push_back(format!("--- Failed to spawn scraper process: {} ---", e));
             }
         }
         
-        is_scraping.store(false, Ordering::SeqCst);
+        state_clone.is_scraping.store(false, Ordering::SeqCst);
     });
 
-    Ok(Json(ScrapeStatus { running: true }))
+    Ok(Json(ScrapeStatus {
+        running: true,
+        last_run_success: state.last_run_success.load(Ordering::SeqCst),
+    }))
 }
+
+use axum::response::IntoResponse;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+static PREVIEW_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Deserialize)]
+struct PreviewParams {
+    voice: String,
+}
+
+/// `GET /api/tts/preview` — generates a short voice sample using edge-tts and streams the audio.
+async fn handle_tts_preview(
+    Query(params): Query<PreviewParams>,
+) -> impl IntoResponse {
+    let voice = params.voice;
+    // Security check: only allow alphanumeric, hyphens, and underscores in voice name
+    if !voice.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return (StatusCode::BAD_REQUEST, "Invalid voice identifier").into_response();
+    }
+
+    // Try to extract a clean name for a friendly prefix, e.g. "Sonia" or "Guy"
+    let clean_name = voice.split('-').last().unwrap_or(&voice).replace("Neural", "");
+    let text = format!("Hello! This is a preview of the {} voice.", clean_name);
+
+    let count = PREVIEW_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros())
+        .unwrap_or(0);
+    
+    let filename = format!("preview-{}-{}.mp3", timestamp, count);
+    let preview_path = std::env::temp_dir().join(filename);
+
+    info!("Generating TTS preview for voice: {} -> {:?}", voice, preview_path);
+
+    // Try spawning edge-tts command, fall back to python3 -m edge_tts if it fails
+    let mut success = false;
+    let mut cmd = tokio::process::Command::new("edge-tts");
+    cmd.arg("--voice").arg(&voice)
+       .arg("--text").arg(&text)
+       .arg("--write-media").arg(&preview_path);
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            if let Ok(status) = child.wait().await {
+                if status.success() {
+                    success = true;
+                }
+            }
+        }
+        Err(_) => {}
+    }
+
+    if !success {
+        // Fallback to calling python3 -m edge_tts
+        info!("edge-tts direct execution failed, attempting fallback python3 -m edge_tts");
+        let mut fallback_cmd = tokio::process::Command::new("python3");
+        fallback_cmd.arg("-m").arg("edge_tts.cli")
+           .arg("--voice").arg(&voice)
+           .arg("--text").arg(&text)
+           .arg("--write-media").arg(&preview_path);
+
+        if let Ok(mut child) = fallback_cmd.spawn() {
+            if let Ok(status) = child.wait().await {
+                if status.success() {
+                    success = true;
+                }
+            }
+        }
+    }
+
+    if success {
+        // Read file
+        match tokio::fs::read(&preview_path).await {
+            Ok(bytes) => {
+                // Clean up file asynchronously
+                let _ = tokio::fs::remove_file(&preview_path).await;
+                return (
+                    [(axum::http::header::CONTENT_TYPE, "audio/mpeg")],
+                    bytes,
+                ).into_response();
+            }
+            Err(e) => {
+                error!("Failed to read preview file: {}", e);
+            }
+        }
+    } else {
+        error!("Both edge-tts and fallback python3 -m edge_tts failed to generate preview");
+    }
+
+    // Clean up if it was created but not read
+    let _ = tokio::fs::remove_file(&preview_path).await;
+    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate preview").into_response()
+}
+
 
 // ═══════════════════════════════════════════════════════════════════
 // BACKGROUND CLEANUP TASK
@@ -311,13 +596,18 @@ async fn main() {
     let state = AppState {
         data_dir: Arc::clone(&data_dir),
         is_scraping: Arc::new(AtomicBool::new(false)),
+        scraper_logs: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+        last_run_success: Arc::new(AtomicBool::new(true)),
     };
 
     let app = Router::new()
         // JSON API for the frontend to discover media files
         .route("/api/media", get(handle_list_media))
+        .route("/api/config", get(handle_get_config).post(handle_post_config))
         .route("/api/scrape/status", get(handle_scrape_status))
         .route("/api/scrape/trigger", post(handle_scrape_trigger))
+        .route("/api/scrape/logs", get(handle_scrape_logs))
+        .route("/api/tts/preview", get(handle_tts_preview))
         // Serve generated media (EPUB + MP3) under /media/
         .nest_service("/media", ServeDir::new(&*data_dir))
         // Serve the single-page frontend for all other routes

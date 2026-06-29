@@ -1,0 +1,11 @@
+# AI ignore patterns
+.venv/
+node_modules/
+data/
+server/target/
+*.epub
+*.mp3
+*.log
+.DS_Store
+cookies.json
+.env
