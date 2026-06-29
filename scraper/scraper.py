@@ -1065,6 +1065,16 @@ async def run_pipeline() -> None:
     # ── Phase 5: Build EPUB ───────────────────────────────────────
     build_epub(all_articles, date_str)
 
+    # ── Phase 5b: Save article sidecar for later audio regen ─────
+    sidecar_path = DATA_DIR / f"articles-{date_str}.json"
+    try:
+        import json as _json
+        with open(sidecar_path, "w", encoding="utf-8") as f:
+            _json.dump(all_articles, f, ensure_ascii=False, indent=2, default=str)
+        log.info("Article sidecar saved → %s", sidecar_path)
+    except Exception as e:
+        log.warning("Failed to save article sidecar: %s", e)
+
     # ── Phase 6: Generate audio tracks ───────────────────────────
     radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
     podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
@@ -1101,5 +1111,54 @@ async def run_pipeline() -> None:
     log.info("══════════════════════════════════════════════════")
 
 
+async def run_regen_audio(date_str: str) -> None:
+    """
+    Audio-only regeneration: loads the articles sidecar for *date_str*,
+    re-runs LLM + TTS and overwrites the MP3 files for that date.
+    No scraping, no dedup changes, no EPUB rebuild.
+    """
+    import json as _json
+
+    sidecar_path = DATA_DIR / f"articles-{date_str}.json"
+    if not sidecar_path.exists():
+        log.error("No article sidecar found for date '%s' at %s", date_str, sidecar_path)
+        raise FileNotFoundError(f"Article sidecar not found: {sidecar_path}")
+
+    log.info("══════════════════════════════════════════════════")
+    log.info("  Audio Regen Pipeline  —  %s  [LLM: %s]", date_str, LLM_BACKEND)
+    log.info("══════════════════════════════════════════════════")
+
+    with open(sidecar_path, "r", encoding="utf-8") as f:
+        all_articles = _json.load(f)
+    log.info("Loaded %d articles from sidecar", len(all_articles))
+
+    # Re-apply highlight curation (voice/sources may have changed)
+    all_articles = curate_audio_highlights(all_articles)
+
+    log.info("Building prompt and calling LLM…")
+    prompt = build_prompt(all_articles)
+    llm_response = call_llm(prompt)
+    log.info("LLM response received (%d chars)", len(llm_response))
+
+    short_radio  = extract_xml_block(llm_response, "short_radio")
+    long_podcast = extract_xml_block(llm_response, "long_podcast")
+
+    radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
+    podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
+
+    await asyncio.gather(
+        generate_tts(short_radio,  radio_path,   VOICE_SHORT),
+        generate_tts(long_podcast, podcast_path, VOICE_LONG),
+    )
+
+    log.info("══════════════════════════════════════════════════")
+    log.info("  Audio regen complete — %s", date_str)
+    log.info("══════════════════════════════════════════════════")
+
+
 if __name__ == "__main__":
-    asyncio.run(run_pipeline())
+    regen_date = os.getenv("REGEN_DATE", "").strip()
+    if regen_date:
+        asyncio.run(run_regen_audio(regen_date))
+    else:
+        asyncio.run(run_pipeline())

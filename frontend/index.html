@@ -1514,22 +1514,38 @@
       const entry = mediaData.find(e => e.date === dateStr);
       if (!entry) return;
 
-      renderAudioPlayer('radio',   entry.radio,   dateStr);
-      renderAudioPlayer('podcast', entry.podcast, dateStr);
+      renderAudioPlayer('radio',   entry.radio,   dateStr, entry);
+      renderAudioPlayer('podcast', entry.podcast, dateStr, entry);
       loadEpub(entry.epub, dateStr);
     }
 
     // ── Render an audio player card ────────────────────────────
-    function renderAudioPlayer(type, filename, dateStr) {
+    function renderAudioPlayer(type, filename, dateStr, entry) {
       const contentEl = type === 'radio' ? radioContent : podcastContent;
       const label     = type === 'radio' ? 'Flash Briefing' : 'Full Podcast';
 
       if (!filename) {
+        // Show regen button if an EPUB exists for this date (meaning sidecar should be present too)
+        const hasEpub = entry && entry.epub;
         contentEl.innerHTML = `
           <div class="unavailable-state">
             <div class="icon">🔇</div>
             <p>${label} not available for ${formatDate(dateStr)}</p>
-            <p style="font-size:0.72rem;color:var(--ctp-overlay0)">Run the scraper to generate audio</p>
+            ${hasEpub ? `
+            <button
+              id="regenBtn-${type}"
+              onclick="triggerRegenAudio('${dateStr}', '${type}')"
+              style="margin-top:0.75rem; padding:0.45rem 1rem; font-size:0.78rem; font-weight:600;
+                     background:var(--ctp-blue); color:var(--ctp-base); border:none;
+                     border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:0.4rem;
+                     transition:opacity 0.2s;"
+              onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+              🔁 Re-generate Audio
+            </button>
+            <p style="font-size:0.7rem;color:var(--ctp-overlay0);margin-top:0.4rem;">
+              Re-runs LLM &amp; TTS using today's scraped articles — no full re-scrape needed
+            </p>` : `
+            <p style="font-size:0.72rem;color:var(--ctp-overlay0)">Run the scraper to generate audio</p>`}
           </div>`;
         return;
       }
@@ -1799,6 +1815,50 @@
     }
 
     scrapeBtn.addEventListener('click', triggerScraper);
+
+    // ── Re-generate Audio (LLM + TTS only, no full scrape) ─────
+    async function triggerRegenAudio(dateStr, type) {
+      if (isScrapingActive) {
+        toast('A scraper job is already running. Please wait.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById(`regenBtn-${type}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Regenerating…';
+      }
+
+      const shortSources = [];
+      document.querySelectorAll('#shortSourcesContainer input[type="checkbox"]:checked').forEach(cb => {
+        shortSources.push(cb.value);
+      });
+      const longSources = [];
+      document.querySelectorAll('#longSourcesContainer input[type="checkbox"]:checked').forEach(cb => {
+        longSources.push(cb.value);
+      });
+
+      const qParams = new URLSearchParams({ date: dateStr });
+      if (voiceShortSelect) qParams.set('voice_short', voiceShortSelect.value);
+      if (voiceLongSelect)  qParams.set('voice_long',  voiceLongSelect.value);
+      if (shortSources.length) qParams.set('short_sources', shortSources.join(','));
+      if (longSources.length)  qParams.set('long_sources',  longSources.join(','));
+
+      try {
+        const resp = await fetch(`/api/scrape/regen-audio?${qParams.toString()}`, { method: 'POST' });
+        if (resp.status === 409) {
+          toast('A scraper job is already running.', 'error');
+          if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate Audio'; }
+          return;
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        toast('Audio regeneration started! LLM → TTS only, no re-scrape.', 'success');
+        checkScraperStatus();
+      } catch (err) {
+        toast(`Failed to start audio regen: ${err.message}`, 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate Audio'; }
+      }
+    }
 
     // ── Polling Scraper Status ──────────────────────────────────
     let isConsoleCollapsed = false;

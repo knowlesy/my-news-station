@@ -410,6 +410,121 @@ async fn handle_scrape_trigger(
     }))
 }
 
+/// `POST /api/scrape/regen-audio?date=DATESTR` — re-runs only LLM + TTS for an existing date,
+/// loading the saved articles sidecar. No full scrape performed.
+#[derive(Deserialize)]
+struct RegenAudioParams {
+    date: Option<String>,
+    voice_short: Option<String>,
+    voice_long: Option<String>,
+    short_sources: Option<String>,
+    long_sources: Option<String>,
+}
+
+async fn handle_regen_audio(
+    State(state): State<AppState>,
+    Query(params): Query<RegenAudioParams>,
+) -> Result<Json<ScrapeStatus>, StatusCode> {
+    let date_str = params.date.clone().ok_or(StatusCode::BAD_REQUEST)?;
+
+    let was_running = state.is_scraping.swap(true, Ordering::SeqCst);
+    if was_running {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
+    let scraper_script = std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
+
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        info!("Spawning audio regen for date: {}", date_str);
+
+        let mut cmd = tokio::process::Command::new(&python_bin);
+        cmd.arg(&scraper_script)
+           .env("REGEN_DATE", &date_str);
+
+        if let Some(vs) = params.voice_short { cmd.env("VOICE_SHORT", vs); }
+        if let Some(vl) = params.voice_long  { cmd.env("VOICE_LONG", vl); }
+        if let Some(ss) = params.short_sources { cmd.env("SHORT_SOURCES", ss); }
+        if let Some(ls) = params.long_sources  { cmd.env("LONG_SOURCES", ls); }
+
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        {
+            let mut logs = state_clone.scraper_logs.lock().await;
+            logs.clear();
+            logs.push_back(format!("--- Starting audio regen for {} ---", date_str));
+        }
+        state_clone.last_run_success.store(true, Ordering::SeqCst);
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+
+                const MAX_LOG_LINES: usize = 150;
+
+                let logs_stdout = Arc::clone(&state_clone.scraper_logs);
+                if let Some(out) = stdout {
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(out).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let mut l = logs_stdout.lock().await;
+                            l.push_back(line);
+                            if l.len() > MAX_LOG_LINES { l.pop_front(); }
+                        }
+                    });
+                }
+
+                let logs_stderr = Arc::clone(&state_clone.scraper_logs);
+                if let Some(err) = stderr {
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(err).lines();
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            let mut l = logs_stderr.lock().await;
+                            l.push_back(format!("[ERROR] {}", line));
+                            if l.len() > MAX_LOG_LINES { l.pop_front(); }
+                        }
+                    });
+                }
+
+                match child.wait().await {
+                    Ok(status) => {
+                        let success = status.success();
+                        state_clone.last_run_success.store(success, Ordering::SeqCst);
+                        let mut l = state_clone.scraper_logs.lock().await;
+                        if success {
+                            l.push_back("--- Audio regen completed successfully ---".to_string());
+                        } else {
+                            l.push_back(format!("--- Audio regen failed with exit status: {:?} ---", status));
+                        }
+                    }
+                    Err(e) => {
+                        state_clone.last_run_success.store(false, Ordering::SeqCst);
+                        let mut l = state_clone.scraper_logs.lock().await;
+                        l.push_back(format!("--- Error during audio regen: {} ---", e));
+                    }
+                }
+            }
+            Err(e) => {
+                state_clone.last_run_success.store(false, Ordering::SeqCst);
+                let mut l = state_clone.scraper_logs.lock().await;
+                l.push_back(format!("--- Failed to spawn regen process: {} ---", e));
+            }
+        }
+
+        state_clone.is_scraping.store(false, Ordering::SeqCst);
+    });
+
+    Ok(Json(ScrapeStatus {
+        running: true,
+        last_run_success: state.last_run_success.load(Ordering::SeqCst),
+    }))
+}
+
 use axum::response::IntoResponse;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 static PREVIEW_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -610,6 +725,7 @@ async fn main() {
         .route("/api/config", get(handle_get_config).post(handle_post_config))
         .route("/api/scrape/status", get(handle_scrape_status))
         .route("/api/scrape/trigger", post(handle_scrape_trigger))
+        .route("/api/scrape/regen-audio", post(handle_regen_audio))
         .route("/api/scrape/logs", get(handle_scrape_logs))
         .route("/api/tts/preview", get(handle_tts_preview))
         // Serve generated media (EPUB + MP3) under /media/
