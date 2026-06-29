@@ -135,6 +135,10 @@ impl Default for AppConfig {
                     name: "DevOpsCube".to_string(),
                     url: "https://devopscube.com/feed/".to_string(),
                 },
+                RssFeed {
+                    name: "Daily Mail".to_string(),
+                    url: "https://www.dailymail.com/articles.rss".to_string(),
+                },
             ],
             medium_tags: vec!["terraform".to_string()],
         }

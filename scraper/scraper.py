@@ -67,6 +67,7 @@ RSS_FEEDS = [
     {"name": "DevOps Daily", "url": "https://devopsdaily.substack.com/feed"},
     {"name": "DevOps Bulletin", "url": "https://devopsbulletin.substack.com/feed"},
     {"name": "DevOpsCube", "url": "https://devopscube.com/feed/"},
+    {"name": "Daily Mail", "url": "https://www.dailymail.com/articles.rss"},
 ]
 
 # Medium tags to scrape for top articles
