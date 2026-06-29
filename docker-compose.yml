@@ -5,7 +5,7 @@ version: "3.9"
 # Usage:
 #   cp .env.example .env   (fill in GOOGLE_AI_KEY)
 #   docker compose up --build
-#   open http://localhost:3000
+#   open http://localhost:3001
 #
 # To run a manual scrape:
 #   docker compose run --rm scraper
@@ -20,7 +20,7 @@ services:
       dockerfile: Dockerfile
     container_name: my-news-server
     ports:
-      - "3000:3000"
+      - "3001:3000"
     env_file: .env
     environment:
       DATA_DIR: /app/data
