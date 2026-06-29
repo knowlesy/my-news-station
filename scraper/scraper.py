@@ -704,6 +704,19 @@ def curate_audio_highlights(all_articles: list[dict]) -> list[dict]:
             a["audio_highlight"] = True
             log.info("  [MEDIUM PICK] %s", a["title"][:80])
 
+    # Pass 3: Enforce limit of at most 4 highlights per news provider (chronological priority)
+    MAX_HIGHLIGHTS_PER_SOURCE = 4
+    source_counts = {}
+    for a in all_articles:
+        if a.get("audio_highlight"):
+            source = a.get("source", "")
+            count = source_counts.get(source, 0)
+            if count >= MAX_HIGHLIGHTS_PER_SOURCE:
+                a["audio_highlight"] = False
+                log.info("  [HIGHLIGHT CAPPED (Demoted)] %s (%s)", a["title"][:80], source)
+            else:
+                source_counts[source] = count + 1
+
     total_highlights = sum(1 for a in all_articles if a["audio_highlight"])
     log.info("Audio highlights selected: %d / %d", total_highlights, len(all_articles))
     return all_articles
