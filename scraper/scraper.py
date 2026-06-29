@@ -715,12 +715,12 @@ def curate_audio_highlights(all_articles: list[dict]) -> list[dict]:
 SYSTEM_PROMPT = """\
 You are an advanced news editing and broadcasting engine. You are provided with a complete daily pool of articles, along with a marked list of curated audio highlights. Process this text and wrap your outputs in these designated XML tags:
 
-- <short_radio>: Focus ONLY on the marked audio highlights and top stories. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
+- <short_radio>: Focus ONLY on the curated stories listed under the 'For <short_radio>' section below. Do NOT mention, summarize, or draw details from any other articles in the pool. Act as a punchy, concise radio news anchor delivering a brief flash briefing similar to an Android Auto or smart alarm clock setup.
   CRITICAL TIME CONSTRAINT: This script MUST be crisp and tightly edited. It must absolutely NOT exceed a 30-minute reading time under any circumstances. Target a high-density delivery between 500 to 2,000 words total.
   Structure: Continuous text script. Group stories by source and introduce them naturally (e.g., 'The following is reported by BBC News:' or 'From BBC News, first we have...') instead of repeating '[Source] reported that' for each individual story. Keep the narration flowing, conversational, and natural. NO markdown formatting, asterisks, or bolding. Translate code/terminal commands into conceptual, easy-to-understand audio explanations.
   Always use time-neutral greetings (e.g., 'Hello', 'Welcome', 'This is your daily briefing') rather than 'Good morning' or 'Good evening'.
 
-- <long_podcast>: Focus on the marked audio highlights and top stories, expanding on their context. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. Group stories by source and introduce them naturally instead of repeating '[Source] reported that' repeatedly. NO speaker tags or audio cues. Pure text prose optimized for TTS.
+- <long_podcast>: Focus ONLY on the curated stories listed under the 'For <long_podcast>' section below. Do NOT mention, summarize, or draw details from any other articles in the pool. Act as a casual, conversational tech podcast host delivering a seamless monologue. Use smooth verbal transitions. Group stories by source and introduce them naturally instead of repeating '[Source] reported that' repeatedly. NO speaker tags or audio cues. Pure text prose optimized for TTS.
   Always use time-neutral greetings (e.g., 'Hello', 'Welcome', 'This is your daily podcast briefing') rather than 'Good morning' or 'Good evening'.
 """
 
@@ -736,11 +736,12 @@ def build_prompt(all_articles: list[dict]) -> str:
     short_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in short_highlights) or "  (none flagged)"
     long_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in long_highlights) or "  (none flagged)"
 
+    # Only pass articles to the LLM that are actually flagged as highlights to prevent leakage
     pool_sections = []
-    for i, a in enumerate(all_articles, 1):
-        flag = " ★ [AUDIO HIGHLIGHT]" if a.get("audio_highlight") else ""
+    highlight_articles = [a for a in all_articles if a.get("audio_highlight")]
+    for i, a in enumerate(highlight_articles, 1):
         pool_sections.append(
-            f"=== ARTICLE {i}{flag} ===\n"
+            f"=== ARTICLE {i} ===\n"
             f"Source:  {a['source']}\n"
             f"Title:   {a['title']}\n"
             f"URL:     {a['url']}\n\n"
