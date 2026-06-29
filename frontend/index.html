@@ -1867,13 +1867,30 @@
           return;
         }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        // Immediately show the same running UI as a full scrape
+        isScrapingActive = true;
+        scrapeBtn.disabled = true;
+        scrapeBtn.innerHTML = '⚙️ Running...';
+        scrapeProgressBar.style.display = 'block';
+        scrapeFailureBanner.style.display = 'none';
+        scraperLogConsole.style.display = 'block';
+        consoleStatusDot.style.background = 'var(--ctp-yellow)';
+        setStatus('Re-generating audio — LLM + TTS running...', 'loading');
+        // Expand the log console so it is visible immediately
+        if (isConsoleCollapsed) {
+          isConsoleCollapsed = false;
+          consoleLogOutput.style.display = 'block';
+          toggleConsoleBtn.innerHTML = 'Collapse';
+        }
         toast('Re-generating audio — LLM + TTS running, no full re-scrape.', 'success');
-        checkScraperStatus();
+        await fetchScraperLogs();
       } catch (err) {
         toast(`Failed to start audio regen: ${err.message}`, 'error');
         if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate'; }
       }
     }
+
 
 
     // ── Polling Scraper Status ──────────────────────────────────
