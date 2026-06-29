@@ -1066,7 +1066,9 @@ async def run_pipeline() -> None:
     build_epub(all_articles, date_str)
 
     # ── Phase 5b: Save article sidecar for later audio regen ─────
-    sidecar_path = DATA_DIR / f"articles-{date_str}.json"
+    # Use date-only key (YYYYMMDD) so regen can always find it by date prefix
+    date_only = date_str[:8]
+    sidecar_path = DATA_DIR / f"articles-{date_only}.json"
     try:
         import json as _json
         with open(sidecar_path, "w", encoding="utf-8") as f:
@@ -1113,15 +1115,27 @@ async def run_pipeline() -> None:
 
 async def run_regen_audio(date_str: str) -> None:
     """
-    Audio-only regeneration: loads the articles sidecar for *date_str*,
+    Audio-only regeneration: loads the articles sidecar for *date_str* (YYYYMMDD prefix),
     re-runs LLM + TTS and overwrites the MP3 files for that date.
     No scraping, no dedup changes, no EPUB rebuild.
     """
     import json as _json
+    import glob
 
-    sidecar_path = DATA_DIR / f"articles-{date_str}.json"
+    # date_str is the YYYYMMDD group key from the media list.
+    # Sidecar is saved as articles-YYYYMMDD.json
+    date_only = date_str[:8]
+    sidecar_path = DATA_DIR / f"articles-{date_only}.json"
+
     if not sidecar_path.exists():
-        log.error("No article sidecar found for date '%s' at %s", date_str, sidecar_path)
+        log.error(
+            "No article sidecar found for date '%s'. Expected: %s",
+            date_str, sidecar_path
+        )
+        log.error(
+            "Tip: sidecars are only created from scrapes run after this feature was added. "
+            "Run a new full scrape to generate one."
+        )
         raise FileNotFoundError(f"Article sidecar not found: {sidecar_path}")
 
     log.info("══════════════════════════════════════════════════")
@@ -1143,8 +1157,10 @@ async def run_regen_audio(date_str: str) -> None:
     short_radio  = extract_xml_block(llm_response, "short_radio")
     long_podcast = extract_xml_block(llm_response, "long_podcast")
 
-    radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
-    podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
+    # Write new MP3s — overwrite existing files for this date so the player picks them up
+    regen_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    radio_path   = DATA_DIR / f"short-radio-{date_only}.mp3"
+    podcast_path = DATA_DIR / f"long-podcast-{date_only}.mp3"
 
     await asyncio.gather(
         generate_tts(short_radio,  radio_path,   VOICE_SHORT),
@@ -1152,7 +1168,8 @@ async def run_regen_audio(date_str: str) -> None:
     )
 
     log.info("══════════════════════════════════════════════════")
-    log.info("  Audio regen complete — %s", date_str)
+    log.info("  Audio regen complete — %s (files: short-radio-%s.mp3, long-podcast-%s.mp3)",
+             date_str, date_only, date_only)
     log.info("══════════════════════════════════════════════════")
 
 
