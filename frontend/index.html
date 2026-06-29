@@ -717,7 +717,7 @@
 
     <!-- Global Options Modal -->
     <div id="optionsModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); z-index:1000; align-items:center; justify-content:center;">
-      <div class="modal-content" style="background:var(--ctp-mantle); border:1px solid var(--ctp-surface0); border-radius:12px; padding:1.5rem; width:90%; max-width:550px; display:flex; flex-direction:column; gap:1.25rem; box-shadow:0 10px 30px rgba(0,0,0,0.3); animation: slide-down 0.2s ease-out;">
+      <div class="modal-content" style="background:var(--ctp-mantle); border:1px solid var(--ctp-surface0); border-radius:12px; padding:1.5rem; width:90%; max-width:550px; max-height:90vh; overflow-y:auto; display:flex; flex-direction:column; gap:1.25rem; box-shadow:0 10px 30px rgba(0,0,0,0.3); animation: slide-down 0.2s ease-out;">
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.75rem;">
           <span style="font-weight:600; font-size:1.1rem; color:var(--ctp-text);">⚙️ Global Settings & Sources</span>
           <button id="closeOptionsBtn" style="background:transparent; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:1.2rem; margin-left:auto; outline:none;" aria-label="Close settings">✕</button>
@@ -744,6 +744,17 @@
         <div>
           <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">MEDIUM TAGS, HANDLES OR PUBLICATION DOMAINS (COMMA-SEPARATED)</div>
           <input type="text" id="mediumTagsInput" style="width:100%; height:36px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0.5rem; font-size:0.8rem; outline:none;" placeholder="terraform, @username, netflix-techblog.medium.com">
+        </div>
+
+        <!-- Source Health / Silencing -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em; display:flex; justify-content:space-between;">
+            <span>SOURCE HEALTH</span>
+            <span style="font-weight:normal; text-transform:none; font-size:0.7rem; color:var(--ctp-surface2);">*Flags sources inactive > 30 days</span>
+          </div>
+          <div id="sourceHealthContainer" style="background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.5rem; max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:0.5rem;">
+            <!-- Rendered dynamically -->
+          </div>
         </div>
 
         <!-- Action buttons -->
@@ -1141,11 +1152,22 @@
     };
 
     // ── Source Checkboxes Generator ─────────────────────────────
+    let sourceActivity = {};
+
     async function fetchAndRenderConfig() {
       try {
         const res = await fetch('/api/config');
         if (!res.ok) throw new Error('Failed to fetch config');
         currentConfig = await res.json();
+
+        try {
+          const actRes = await fetch('/api/sources/activity');
+          if (actRes.ok) {
+            sourceActivity = await actRes.json();
+          }
+        } catch (e) {
+          console.warn('Failed to fetch source activity:', e);
+        }
 
         const sources = [];
         currentConfig.rss_feeds.forEach(feed => {
@@ -1196,8 +1218,19 @@
           updateSelectAllState(type);
         });
 
+        let warningIcon = '';
+        if (!currentConfig.silenced_sources?.includes(src)) {
+           const lastSeen = sourceActivity[src];
+           if (lastSeen) {
+             const diffDays = (new Date() - new Date(lastSeen)) / (1000 * 60 * 60 * 24);
+             if (diffDays > 30) {
+               warningIcon = '<span title="No articles pulled for >30 days. Possibly dead." style="cursor:help;">⚠️</span>';
+             }
+           }
+        }
+
         label.appendChild(cb);
-        label.appendChild(document.createTextNode(src));
+        label.insertAdjacentHTML('beforeend', `<span>${src}</span> ${warningIcon}`);
         container.appendChild(label);
       });
     }
@@ -1258,6 +1291,8 @@
         .map(tag => tag.trim())
         .filter(tag => tag.length > 0);
 
+      const silenced_sources = Array.from(document.querySelectorAll('#sourceHealthContainer .silence-checkbox:checked')).map(cb => cb.value);
+
       const payload = {
         rss_feeds: rss_feeds.map(url => {
           try {
@@ -1268,7 +1303,8 @@
             return { name: "News Feed", url: url };
           }
         }),
-        medium_tags: medium_tags
+        medium_tags: medium_tags,
+        silenced_sources: silenced_sources
       };
 
       try {

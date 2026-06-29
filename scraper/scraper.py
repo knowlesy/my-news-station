@@ -1108,6 +1108,27 @@ async def run_pipeline() -> None:
         except Exception as e:
             log.warning("Failed to save scraped_urls.json: %s", e)
 
+    # ── Phase 7: Update source activity tracking ─────────────────
+    if all_articles:
+        try:
+            import json as _json
+            activity_path = DATA_DIR / "source_activity.json"
+            activity = {}
+            if activity_path.exists():
+                with open(activity_path, "r", encoding="utf-8") as f:
+                    activity = _json.load(f)
+            
+            iso_now = datetime.now().isoformat()
+            for a in all_articles:
+                if src := a.get("source"):
+                    activity[src] = iso_now
+                    
+            with open(activity_path, "w", encoding="utf-8") as f:
+                _json.dump(activity, f, indent=2)
+            log.info("Updated source activity tracking for %d sources", len(set(a.get("source") for a in all_articles if a.get("source"))))
+        except Exception as e:
+            log.warning("Failed to update source activity: %s", e)
+
     log.info("══════════════════════════════════════════════════")
     log.info("  Pipeline complete. Output files in %s", DATA_DIR)
     log.info("══════════════════════════════════════════════════")

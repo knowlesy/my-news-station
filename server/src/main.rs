@@ -69,6 +69,8 @@ struct RssFeed {
 struct AppConfig {
     rss_feeds: Vec<RssFeed>,
     medium_tags: Vec<String>,
+    #[serde(default)]
+    silenced_sources: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -128,8 +130,8 @@ impl Default for AppConfig {
                     url: "https://devopsdaily.substack.com/feed".to_string(),
                 },
                 RssFeed {
-                    name: "DevOps Bulletin".to_string(),
-                    url: "https://devopsbulletin.substack.com/feed".to_string(),
+                    name: "Terraform Blog".to_string(),
+                    url: "https://www.hashicorp.com/blog/category/terraform/feed".to_string(),
                 },
                 RssFeed {
                     name: "DevOpsCube".to_string(),
@@ -141,6 +143,7 @@ impl Default for AppConfig {
                 },
             ],
             medium_tags: vec!["terraform".to_string()],
+            silenced_sources: Vec::new(),
         }
     }
 }
@@ -252,6 +255,22 @@ async fn handle_post_config(
         }
     }
     Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// `GET /api/sources/activity` — read and return source activity (last seen dates) from data/source_activity.json
+async fn handle_get_source_activity(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = state.data_dir.join("source_activity.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(activity) = serde_json::from_str::<serde_json::Value>(&content) {
+                return Ok(Json(activity));
+            }
+        }
+    }
+    // Return empty object if no activity tracking exists yet
+    Ok(Json(serde_json::json!({})))
 }
 
 #[derive(Serialize)]
@@ -723,6 +742,7 @@ async fn main() {
         // JSON API for the frontend to discover media files
         .route("/api/media", get(handle_list_media))
         .route("/api/config", get(handle_get_config).post(handle_post_config))
+        .route("/api/sources/activity", get(handle_get_source_activity))
         .route("/api/scrape/status", get(handle_scrape_status))
         .route("/api/scrape/trigger", post(handle_scrape_trigger))
         .route("/api/scrape/regen-audio", post(handle_regen_audio))
