@@ -70,6 +70,11 @@ RSS_FEEDS = [
     {"name": "Daily Mail", "url": "https://www.dailymail.com/articles.rss"},
 ]
 
+# Sources whose article pages hard-block automated fetches at the network
+# level (Akamai edge, in Daily Mail's case) regardless of browser fingerprint —
+# skip the full-page fetch and use the RSS summary as the content instead.
+NO_BROWSER_FETCH_SOURCES = {"Daily Mail"}
+
 # Medium tags to scrape for top articles
 MEDIUM_TAGS = ["terraform"]
 
@@ -606,7 +611,7 @@ async def extract_article_content(context, article: dict) -> dict:
     Falls back to the RSS summary if extraction fails.
     """
     url = article["url"]
-    if not url:
+    if not url or article.get("source") in NO_BROWSER_FETCH_SOURCES:
         article["content"] = article.get("summary", "")
         return article
 
@@ -1121,8 +1126,11 @@ async def run_pipeline() -> None:
             iso_now = datetime.now().isoformat()
             for a in all_articles:
                 if src := a.get("source"):
-                    activity[src] = iso_now
-                    
+                    activity[src] = {
+                        "last_seen": iso_now,
+                        "degraded":  src in NO_BROWSER_FETCH_SOURCES,
+                    }
+
             with open(activity_path, "w", encoding="utf-8") as f:
                 _json.dump(activity, f, indent=2)
             log.info("Updated source activity tracking for %d sources", len(set(a.get("source") for a in all_articles if a.get("source"))))

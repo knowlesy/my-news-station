@@ -1220,8 +1220,12 @@
 
         let warningIcon = '';
         if (!currentConfig.silenced_sources?.includes(src)) {
-           const lastSeen = sourceActivity[src];
-           if (lastSeen) {
+           const entry = sourceActivity[src];
+           const lastSeen = typeof entry === 'string' ? entry : entry?.last_seen;
+           const degraded = typeof entry === 'object' && entry?.degraded;
+           if (degraded) {
+             warningIcon = '<span title="Full articles blocked upstream — using RSS summary only." style="cursor:help;">🟡</span>';
+           } else if (lastSeen) {
              const diffDays = (new Date() - new Date(lastSeen)) / (1000 * 60 * 60 * 24);
              if (diffDays > 30) {
                warningIcon = '<span title="No articles pulled for >30 days. Possibly dead." style="cursor:help;">⚠️</span>';
@@ -1280,17 +1284,21 @@
       }
 
       allSources.forEach(src => {
-        const lastSeenStr = sourceActivity[src];
+        const entry = sourceActivity[src];
+        const lastSeenStr = typeof entry === 'string' ? entry : entry?.last_seen;
+        const degraded = typeof entry === 'object' && entry?.degraded;
         let statusHtml = '<span style="color:var(--ctp-subtext0);" title="Never seen">⚪ Unknown</span>';
         let isDead = false;
-        
+
         if (lastSeenStr) {
           const lastSeenDate = new Date(lastSeenStr);
           const diffDays = (new Date() - lastSeenDate) / (1000 * 60 * 60 * 24);
-          
+
           if (diffDays > 30) {
             statusHtml = `<span style="color:var(--ctp-red); font-weight:600;" title="Last seen ${Math.floor(diffDays)} days ago">🔴 Dead</span>`;
             isDead = true;
+          } else if (degraded) {
+            statusHtml = `<span style="color:var(--ctp-yellow); font-weight:600;" title="Full articles blocked upstream (network-level) — using RSS summary only, last seen ${Math.floor(diffDays)} days ago">🟡 Degraded</span>`;
           } else {
             statusHtml = `<span style="color:var(--ctp-green);" title="Last seen ${Math.floor(diffDays)} days ago">🟢 Active</span>`;
           }
