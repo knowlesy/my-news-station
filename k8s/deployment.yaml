@@ -10,6 +10,14 @@
 #     --from-literal=LLM_BACKEND=claude_cli \
 #     --from-literal=GOOGLE_AI_KEY="" \
 #     --from-literal=ANTHROPIC_API_KEY=""
+#
+#   Image is private on GHCR — create a pull secret with a PAT
+#   (read:packages scope) or a token from `docker login ghcr.io`:
+#     kubectl create secret docker-registry ghcr-pull-secret \
+#       --namespace my-news \
+#       --docker-server=ghcr.io \
+#       --docker-username=<github-username> \
+#       --docker-password=<PAT with read:packages>
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Secrets scaffold (edit values before applying) ────────────────
@@ -55,9 +63,12 @@ spec:
       securityContext:
         fsGroup: 1000
 
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
       containers:
         - name: news-server
-          image: my-news:latest     # Replace with your registry image
+          image: ghcr.io/knowlesy/my-news-station:latest
           imagePullPolicy: IfNotPresent
 
           ports:
@@ -173,9 +184,12 @@ spec:
         spec:
           restartPolicy: OnFailure
 
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+
           containers:
             - name: scraper
-              image: my-news:latest   # Same image as the server
+              image: ghcr.io/knowlesy/my-news-station:latest   # Same image as the server
               imagePullPolicy: IfNotPresent
 
               # Start Xvfb for Playwright, then run the scraper
