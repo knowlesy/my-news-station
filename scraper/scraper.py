@@ -17,7 +17,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import edge_tts
@@ -1029,9 +1029,22 @@ async def generate_tts(text: str, output_path: Path, voice: str) -> None:
         return
 
     log.info("Generating TTS → %s  (voice: %s, chars: %d)", output_path.name, voice, len(text))
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(str(output_path))
-    log.info("Audio saved → %s", output_path)
+    # edge-tts streams from a network service and occasionally drops mid-way
+    # on long scripts — retry with backoff rather than losing the whole track
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(str(output_path))
+            log.info("Audio saved → %s", output_path)
+            return
+        except Exception as exc:
+            last_exc = exc
+            output_path.unlink(missing_ok=True)  # remove any partial file
+            log.warning("TTS attempt %d/3 failed for %s: %s", attempt, output_path.name, exc)
+            if attempt < 3:
+                await asyncio.sleep(5 * attempt)
+    raise RuntimeError(f"TTS failed after 3 attempts for {output_path.name}") from last_exc
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1161,7 +1174,9 @@ async def run_pipeline() -> None:
     if all_articles:
         activity_path = DATA_DIR / "source_activity.json"
         activity = load_json(activity_path, {})
-        iso_now = datetime.now().isoformat()
+        # UTC with offset — the frontend computes "days ago" in the browser's
+        # locale, so a naive container-local timestamp would skew the result
+        iso_now = datetime.now(timezone.utc).isoformat()
         sources_seen = {a["source"] for a in all_articles if a.get("source")}
         for src in sources_seen:
             activity[src] = {

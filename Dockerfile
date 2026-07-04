@@ -65,8 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── Claude CLI (via npm — Node.js is pre-installed in the base image) ─────
 # This installs the `claude` command globally.
 # First-time OAuth: docker exec -it <container> claude
-RUN npm install -g @anthropic-ai/claude-code 2>/dev/null \
-    && echo "✓ Claude CLI installed: $(claude --version 2>/dev/null || echo 'check manually')"
+RUN npm install -g @anthropic-ai/claude-code \
+    && echo "✓ Claude CLI installed: $(claude --version)"
 
 # ── Python application ───────────────────────────────────────────
 WORKDIR /app
@@ -75,8 +75,12 @@ WORKDIR /app
 COPY scraper/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright Chromium browser binaries
-RUN playwright install chromium --with-deps
+# Install the Chromium build matching the pip-resolved playwright version.
+# (The base image bundles v1.44 browsers, but pip may resolve a newer
+# playwright whose browser revision differs — so this stays version-matched.)
+# --with-deps is deliberately omitted: the base image already has all system
+# libraries, and reinstalling them was pure image bloat.
+RUN playwright install chromium
 
 # Copy application files
 COPY scraper/   /app/scraper/

@@ -4,8 +4,8 @@ Full-repo review covering `scraper/scraper.py` (1,263 lines), `server/src/main.r
 `frontend/index.html` (2,403 lines), Dockerfile, and k8s manifests.
 Items are ordered by severity. Every fix here retains existing functionality.
 
-> **Status (2026-07-04):** All P0 (1–5), P1 (6–10), and P2 (11–19) items are **fixed and
-> verified** (details inline). P3 remains open.
+> **Status (2026-07-04):** All items — P0 (1–5), P1 (6–10), P2 (11–19), and P3 (20–24) — are
+> **fixed and verified** (details inline). Review complete.
 
 ---
 
@@ -209,38 +209,57 @@ helpers.
 
 ## P3 — Simplification & hygiene
 
-### 20. Dockerfile double-installs Chromium
+### 20. ✅ FIXED — Dockerfile double-installs Chromium
 The base image `mcr.microsoft.com/playwright/python:v1.44.0-jammy` already ships Chromium, but
 `RUN playwright install chromium --with-deps` downloads it again (image bloat, slower quarterly
 builds). Also `npm install -g @anthropic-ai/claude-code 2>/dev/null` hides install failures and
 bakes a stale CLI version into a quarterly image — surface errors, and consider pinning.
+**Applied (amended):** the browser download must stay — pip resolves a newer playwright than the
+base image's bundled v1.44 browsers, so removing it would break at runtime. Instead `--with-deps`
+is dropped (system libs already present in the base image — that was the bloat) with a comment
+explaining the version-match constraint. The Claude CLI install no longer swallows errors via
+`2>/dev/null`; a failed install now fails the build instead of shipping a broken image.
 
-### 21. `:latest` + `imagePullPolicy: IfNotPresent` won't pick up quarterly builds
+### 21. ✅ FIXED — `:latest` + `imagePullPolicy: IfNotPresent` won't pick up quarterly builds
 `k8s/deployment.yaml` pulls `ghcr.io/knowlesy/my-news-station:latest` with `IfNotPresent`: a node
 that already has *any* `latest` cached will never fetch the new quarterly image.
 **Fix:** deploy the `YYYY-MM` date tag the workflow already pushes, or set `Always`.
+**Applied:** both the server Deployment and scraper CronJob now use `imagePullPolicy: Always`
+(with a comment explaining why). The daily CronJob pod naturally picks up a new quarterly image
+within a day of publish; the server picks it up on next restart. Deploying the dated tag remains
+the stricter alternative if reproducible rollbacks become a need.
 
-### 22. Frontend depends on CDN at runtime
+### 22. ✅ FIXED — Frontend depends on CDN at runtime
 epub.js and jszip load from jsdelivr (`index.html:9–12`). The reader breaks if the dashboard is
 used without internet (plausible for a self-hosted LAN k8s app).
 **Fix:** vendor the two minified files into `frontend/vendor/`.
+**Applied:** jszip 3.10.1 and epub.js 0.3.93 vendored into `frontend/vendor/`; script tags point
+at the local copies and no CDN references remain. Verified with a Playwright run that aborts
+every non-localhost request — the EPUB still renders fully offline.
 
-### 23. Stock-firmware X4 sends can't work from the cluster
+### 23. ✅ FIXED — Stock-firmware X4 sends can't work from the cluster
 Stock Xteink firmware only exposes its HTTP server on the device's *own hotspot*
 (192.168.3.3) — the k8s pod can never reach it. Only CrossPoint firmware devices joined to the
 LAN are actually reachable from the server. Worth a note in the Settings UI ("requires CrossPoint
 firmware on your network"), or the probe result will just permanently read offline.
 
-### 24. Minor
+### 24. ✅ FIXED — Minor
 - `scraper.py` uses naive `datetime.now()` for `source_activity.json` while the frontend compares
   with browser-local `new Date()` — "days ago" can be off by the container/browser TZ delta. Use
   UTC (`datetime.now(timezone.utc)`) since the frontend already parses ISO strings.
+  **Applied:** activity timestamps are now UTC with offset.
 - `probeDevice` cache in the frontend and the `updateSendButton` unknown/else branches are
   identical — collapse the two branches.
+  **Applied:** collapsed during the item-15 module split (crosspoint.js).
 - `edge_tts` gets the entire podcast script in one call; long scripts occasionally fail
   mid-stream with no retry. A sentence-chunked retry loop would make audio generation resilient.
+  **Applied:** 3-attempt retry with backoff and partial-file cleanup (verified with a live TTS
+  call). Sentence-chunking deliberately skipped — concatenating separate MP3 fragments produces
+  technically malformed files, not worth the risk for a retry that covers the common failure.
 - `.venv/` sits in the repo working tree — confirm it's gitignored (nodriver was installed into
   it during testing and has a local patch; it should never be committed).
+  **Applied:** confirmed already covered by `.gitignore` (`git check-ignore` passes) — no change
+  needed.
 
 ---
 
@@ -261,5 +280,4 @@ firmware on your network"), or the probe result will just permanently read offli
 3. ~~**Item 11 + 18–19**~~ — ✅ done (2026-07-04).
 4. ~~**Items 12–14**~~ — ✅ done (2026-07-04).
 5. ~~**Item 15**~~ — ✅ done (2026-07-04), verified by Playwright smoke test.
-6. **P3 (items 20–24)** — remaining hygiene: Dockerfile double-install, `:latest` pull policy,
-   CDN vendoring, stock-firmware UX note, minor items.
+6. ~~**P3 (items 20–24)**~~ — ✅ done (2026-07-04).

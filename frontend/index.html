@@ -7,9 +7,9 @@
   <meta name="description" content="Self-hosted AI-powered daily news digest with audio briefings and EPUB reader" />
 
   <!-- jszip (required by epub.js to read zipped .epub files) -->
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="vendor/jszip.min.js"></script>
   <!-- epub.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+  <script src="vendor/epub.min.js"></script>
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -765,6 +765,10 @@
             <input type="text" id="newDeviceName" placeholder="Device name" style="flex:1; height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none;">
             <input type="text" id="newDeviceIp" placeholder="IP address (e.g. 192.168.3.3)" style="flex:2; height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none; font-family:monospace;">
             <button id="addDeviceBtn" class="btn" style="height:32px; background:var(--ctp-blue); color:var(--ctp-base); font-size:0.75rem; white-space:nowrap;">+ Add</button>
+          </div>
+          <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.35rem; line-height:1.4;">
+            ⓘ Requires <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener" style="color:var(--ctp-blue);">CrossPoint firmware</a> with the device joined to this network.
+            Stock-firmware X4s only listen on their own WiFi hotspot, which the server cannot reach — their light will stay 🔴.
           </div>
         </div>
 
