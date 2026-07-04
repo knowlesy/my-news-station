@@ -18,7 +18,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          COUNT=$(git tag -l "v${DATE}-*" 2>/dev/null | wc -l)
+          # Count tags on the REMOTE — the checkout here is shallow with no
+          # tags fetched, so `git tag -l` always sees 0 and the second push
+          # of the day would collide with the existing -001 tag.
+          COUNT=$(git ls-remote --tags origin "refs/tags/v${DATE}-*" | grep -cv '\^{}' || true)
           SEQ=$((COUNT + 1))
           TAG="v${DATE}-$(printf "%03d" $SEQ)"
 
