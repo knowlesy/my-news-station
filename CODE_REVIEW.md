@@ -4,8 +4,8 @@ Full-repo review covering `scraper/scraper.py` (1,263 lines), `server/src/main.r
 `frontend/index.html` (2,403 lines), Dockerfile, and k8s manifests.
 Items are ordered by severity. Every fix here retains existing functionality.
 
-> **Status (2026-07-04):** All five P0 items and all five P1 items are **fixed and verified**
-> (details inline). P2–P3 remain open.
+> **Status (2026-07-04):** All P0 (1–5), P1 (6–10), and P2 (11–19) items are **fixed and
+> verified** (details inline). P3 remains open.
 
 ---
 
@@ -114,37 +114,51 @@ reset — acceptable until item 14 consolidates config handling.
 
 ## P2 — Despaghetti / structure
 
-### 11. `handle_scrape_trigger` and `handle_regen_audio` are ~120 duplicated lines
+### 11. ✅ FIXED — `handle_scrape_trigger` and `handle_regen_audio` are ~120 duplicated lines
 `main.rs:324–443` and `main.rs:456–558` are near-identical: spawn python, pump stdout/stderr into
 the ring buffer, track success, reset the running flag. Only the env vars and log labels differ.
 **Fix:** extract `spawn_scraper_job(state, envs: Vec<(String, String)>, label: &str)`; both
 handlers become ~10 lines.
+**Applied:** `spawn_scraper_job` + `pump_child_stream` helpers own the spawn/log-pump/wait
+machinery; each handler is now just flag-claim + env assembly (~15 lines each).
 
-### 12. Import-time global mutation in the scraper
+### 12. ✅ FIXED — Import-time global mutation in the scraper
 `scraper.py:108–150` reads `config.json` at module import and rebinds `RSS_FEEDS`,
 `MEDIUM_TAGS`, `SYSTEM_PROMPT` — before some of those names are even defined (the direct cause
 of bug #1). Config, constants, and behavior are interleaved across 700 lines.
 **Fix:** move config resolution into a `load_config()` function called at the top of
 `run_pipeline()`/`run_regen_audio()`, returning a small config object (or populating a single
 `CONFIG` dict). Globals become read-only defaults.
+**Applied:** `load_config()` is called explicitly by both entry points; nothing is mutated at
+import time. Verified: importing the module leaves defaults untouched; `load_config()` applies
+feeds/tags/prompt/silencing, and a missing config.json raises a clear `SystemExit`.
 
-### 13. Default source list exists in two places — and has already drifted
+### 13. ✅ FIXED — Default source list exists in two places — and has already drifted
 `scraper.py:54–71` and `main.rs:79–148` both hardcode the default RSS list. They disagree
 (`main.rs` has "Terraform Blog"; scraper has "DevOps Bulletin"/"Let's Do DevOps" variants). The
 scraper's copy only applies when `config.json` doesn't exist, the server's copy when it does the
 first GET — so which defaults you get depends on which component ran first.
 **Fix:** single owner. Simplest: server writes `config.json` with defaults on first boot; scraper
 *requires* the file and has no embedded list.
+**Applied:** exactly that. The Rust default list is now the union of the two drifted lists
+(17 feeds — "DevOps Bulletin" added), the server materialises `config.json` on first boot
+(verified live), and the scraper's embedded list is deleted — it exits with a clear message if
+the file is missing.
 
-### 14. Two sources of truth for user settings
+### 14. ✅ FIXED — Two sources of truth for user settings
 Voice + per-briefing source selection live in browser `localStorage`
 (`index.html:1097–1133`); feeds, tags, silenced sources, devices, and the prompt live in
 server-side `config.json`. Same Settings modal, two storage backends — settings silently differ
 per browser.
 **Fix:** move voice/source-selection into `config.json` (the POST payload already exists);
 keep only cosmetic prefs (theme) in localStorage.
+**Applied:** `voice_short`, `voice_long`, `sources_short`, `sources_long` are new AppConfig
+fields; the frontend saves them via a shared `postConfig()` merge and reads them back with a
+one-time legacy-localStorage fallback. Theme and clicked-editions stay in localStorage.
+Verified via browser automation: voice + source changes persist into config.json. Known minor
+edge: an empty saved source selection is treated as "unsaved" (falls back to all-checked).
 
-### 15. 2,400-line `index.html` monolith
+### 15. ✅ FIXED — 2,400-line `index.html` monolith
 ~1,400 lines of JS in one IIFE with ~30 top-level `let` state variables, inline styles built via
 string templates, and features threaded through each other (crosspoint code patches
 `toggleOptionsModal` from 200 lines away). It works, but every new feature (see #16) is now
@@ -152,30 +166,44 @@ grafted on with wrappers.
 **Fix:** split into ES modules served as static files — `api.js`, `playlist.js`, `epubReader.js`,
 `settings.js`, `crosspoint.js`, `scraperStatus.js` — no bundler needed
 (`<script type="module">`). Mechanical refactor, do it before the next feature lands.
+**Applied:** `frontend/js/{utils,settings,crosspoint,playlist,epubReader,scraperStatus,main}.js`
+(no separate api.js — the fetch calls are thin enough to live in their feature modules).
+index.html is now 1,034 lines of pure HTML/CSS. Cross-module state uses ES-module live bindings
+(`activeDate`, `isScrapingActive`, `currentConfig`). Verified with a full Playwright smoke test
+against the real server: page load, playlist render, EPUB render, settings modal, device
+management, and config persistence — zero console/page errors.
 
-### 16. Monkey-patch and dead code in the crosspoint UI wiring
+### 16. ✅ FIXED — Monkey-patch and dead code in the crosspoint UI wiring
 `index.html:1566` wraps `window.toggleOptionsModal` to inject device-list rendering, and
 `index.html:1578` (`const _origSaveClick = $('saveOptionsBtn');`) is dead — assigned, never used,
 with a comment describing something that isn't there.
 **Fix:** fold device rendering directly into `toggleOptionsModal`, delete the dead const.
+**Applied:** as part of the module split — `toggleOptionsModal` (settings.js) calls
+`syncFromConfig` + `renderCrosspointDevices` directly; the wrapper and dead const are gone.
 
-### 17. Duplicated log-polling / status machinery
+### 17. ✅ FIXED — Duplicated log-polling / status machinery
 `fetchScraperLogs` (`index.html:2317`) vs `fetchModalLogs` (`index.html:1690`) fetch the same
 endpoint and maintain two status dots; the modal adds a second 2s interval on top of the global
 3s poll. The running/finished/failed UI transitions are hand-copied in `checkScraperStatus` *and*
 `triggerRegenAudio`.
 **Fix:** one poller with a list of render callbacks; one `setScraperUiState(running, success)`
 function used by all three call sites.
+**Applied:** scraperStatus.js has a single `refreshLogs()` that renders both the inline console
+and the modal, one `updateStatusDots()` for both dots, and a shared `showRunningUi()` used by
+the status poll, the scrape trigger, and the regen trigger.
 
-### 18. `import json` seven times
+### 18. ✅ FIXED — `import json` seven times
 `json` is imported at `scraper.py:14`, then re-imported inside six functions, twice aliased as
 `_json`. Delete all function-local imports (same for `glob` at `scraper.py:1204` — never used,
 and `regen_ts` at `scraper.py:1243` — assigned, never used).
+**Applied:** only the top-level import remains; unused `glob` import and `regen_ts` deleted.
 
-### 19. Repeated JSON file-IO boilerplate
+### 19. ✅ FIXED — Repeated JSON file-IO boilerplate
 Five near-identical "if exists → open → parse → except → warn" blocks (scraped_urls ×2, activity,
 sidecar, config).
 **Fix:** `load_json(path, default)` / `save_json(path, obj)` helpers, ~10 lines total, removes ~40.
+**Applied:** all five sites (config, scraped_urls ×2, activity, sidecar load/save) now use the
+helpers.
 
 ---
 
@@ -230,6 +258,8 @@ firmware on your network"), or the probe result will just permanently read offli
 
 1. ~~**P0 items 1–5**~~ — ✅ done (2026-07-04).
 2. ~~**Items 6–9**~~ — ✅ done (2026-07-04, including item 10).
-3. **Item 11 + 18–19** — mechanical dedup in Rust and Python.
-4. **Items 12–14** — config ownership consolidation (one sitting, touches all three components).
-5. **Item 15** — frontend modularization, ideally *before* the next UI feature.
+3. ~~**Item 11 + 18–19**~~ — ✅ done (2026-07-04).
+4. ~~**Items 12–14**~~ — ✅ done (2026-07-04).
+5. ~~**Item 15**~~ — ✅ done (2026-07-04), verified by Playwright smoke test.
+6. **P3 (items 20–24)** — remaining hygiene: Dockerfile double-install, `:latest` pull policy,
+   CDN vendoring, stock-firmware UX note, minor items.

@@ -83,6 +83,16 @@ struct AppConfig {
     crosspoint_devices: Vec<CrosspointDevice>,
     #[serde(default)]
     default_crosspoint_ip: Option<String>,
+    // Voice + per-briefing source selection (previously browser localStorage;
+    // stored here so settings are global rather than per-browser)
+    #[serde(default)]
+    voice_short: Option<String>,
+    #[serde(default)]
+    voice_long: Option<String>,
+    #[serde(default)]
+    sources_short: Vec<String>,
+    #[serde(default)]
+    sources_long: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -142,6 +152,10 @@ impl Default for AppConfig {
                     url: "https://devopsdaily.substack.com/feed".to_string(),
                 },
                 RssFeed {
+                    name: "DevOps Bulletin".to_string(),
+                    url: "https://devopsbulletin.substack.com/feed".to_string(),
+                },
+                RssFeed {
                     name: "Terraform Blog".to_string(),
                     url: "https://www.hashicorp.com/blog/category/terraform/feed".to_string(),
                 },
@@ -159,6 +173,10 @@ impl Default for AppConfig {
             system_prompt: None,
             crosspoint_devices: Vec::new(),
             default_crosspoint_ip: None,
+            voice_short: None,
+            voice_long: None,
+            sources_short: Vec::new(),
+            sources_long: Vec::new(),
         }
     }
 }
@@ -326,6 +344,107 @@ struct TriggerParams {
     long_sources: Option<String>,
 }
 
+/// Pump one child stream into the shared log ring buffer, line by line.
+fn pump_child_stream<R>(
+    stream: Option<R>,
+    logs: Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+    prefix: &'static str,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    const MAX_LOG_LINES: usize = 150;
+    let Some(stream) = stream else { return };
+    tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let mut reader = BufReader::new(stream).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let mut l = logs.lock().await;
+            l.push_back(format!("{}{}", prefix, line));
+            if l.len() > MAX_LOG_LINES {
+                l.pop_front();
+            }
+        }
+    });
+}
+
+/// Spawn the Python scraper as a background job with the given env vars,
+/// streaming its output into the log ring buffer and tracking success.
+///
+/// The caller must have already claimed the `is_scraping` flag; this function
+/// releases it when the child exits. `label` names the job in log lines
+/// ("Pipeline", "Audio regen").
+fn spawn_scraper_job(state: AppState, envs: Vec<(&'static str, String)>, label: &'static str) {
+    let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
+    let scraper_script =
+        std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
+
+    tokio::spawn(async move {
+        info!(
+            "Spawning background {} process: {} {}",
+            label, python_bin, scraper_script
+        );
+
+        let mut cmd = tokio::process::Command::new(&python_bin);
+        cmd.arg(&scraper_script);
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
+
+        // Pipe stdout & stderr to capture logs in real time
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        // Clear logs at start of a new run
+        {
+            let mut logs = state.scraper_logs.lock().await;
+            logs.clear();
+            logs.push_back(format!("--- Starting {} ---", label));
+        }
+        state.last_run_success.store(true, Ordering::SeqCst);
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                pump_child_stream(child.stdout.take(), Arc::clone(&state.scraper_logs), "");
+                pump_child_stream(child.stderr.take(), Arc::clone(&state.scraper_logs), "[ERROR] ");
+
+                match child.wait().await {
+                    Ok(status) => {
+                        info!("Background {} completed with status: {:?}", label, status);
+                        let success = status.success();
+                        state.last_run_success.store(success, Ordering::SeqCst);
+                        let mut l = state.scraper_logs.lock().await;
+                        if success {
+                            l.push_back(format!("--- {} completed successfully ---", label));
+                        } else {
+                            l.push_back(format!(
+                                "--- {} failed with exit status: {:?} ---",
+                                label, status
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to wait for background {} process: {}", label, e);
+                        state.last_run_success.store(false, Ordering::SeqCst);
+                        let mut l = state.scraper_logs.lock().await;
+                        l.push_back(format!("--- Error waiting for {}: {} ---", label, e));
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to spawn background {} process ({} {}): {}",
+                    label, python_bin, scraper_script, e
+                );
+                state.last_run_success.store(false, Ordering::SeqCst);
+                let mut l = state.scraper_logs.lock().await;
+                l.push_back(format!("--- Failed to spawn {} process: {} ---", label, e));
+            }
+        }
+
+        state.is_scraping.store(false, Ordering::SeqCst);
+    });
+}
+
 /// `POST /api/scrape/trigger` — spawns the Python scraper script in the background.
 async fn handle_scrape_trigger(
     State(state): State<AppState>,
@@ -336,111 +455,13 @@ async fn handle_scrape_trigger(
         return Err(StatusCode::CONFLICT);
     }
 
-    let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
-    let scraper_script = std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
+    let mut envs: Vec<(&'static str, String)> = Vec::new();
+    if let Some(vs) = params.voice_short { envs.push(("VOICE_SHORT", vs)); }
+    if let Some(vl) = params.voice_long { envs.push(("VOICE_LONG", vl)); }
+    if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
+    if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        info!("Spawning background scraper process: {} {}", python_bin, scraper_script);
-        
-        let mut cmd = tokio::process::Command::new(&python_bin);
-        cmd.arg(&scraper_script);
-        
-        // Pass query parameters to child process environment
-        if let Some(vs) = params.voice_short {
-            cmd.env("VOICE_SHORT", vs);
-        }
-        if let Some(vl) = params.voice_long {
-            cmd.env("VOICE_LONG", vl);
-        }
-        if let Some(ss) = params.short_sources {
-            cmd.env("SHORT_SOURCES", ss);
-        }
-        if let Some(ls) = params.long_sources {
-            cmd.env("LONG_SOURCES", ls);
-        }
-
-        // Pipe stdout & stderr to capture logs in real time
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        // Clear logs at start of a new run
-        {
-            let mut logs = state_clone.scraper_logs.lock().await;
-            logs.clear();
-            logs.push_back("--- Starting news scraper pipeline ---".to_string());
-        }
-        state_clone.last_run_success.store(true, Ordering::SeqCst);
-        
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let stdout = child.stdout.take();
-                let stderr = child.stderr.take();
-                
-                const MAX_LOG_LINES: usize = 150;
-                
-                // Spawn task to read stdout
-                let logs_stdout = Arc::clone(&state_clone.scraper_logs);
-                if let Some(out) = stdout {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut reader = BufReader::new(out).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let mut l = logs_stdout.lock().await;
-                            l.push_back(line);
-                            if l.len() > MAX_LOG_LINES {
-                                l.pop_front();
-                            }
-                        }
-                    });
-                }
-                
-                // Spawn task to read stderr
-                let logs_stderr = Arc::clone(&state_clone.scraper_logs);
-                if let Some(err) = stderr {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut reader = BufReader::new(err).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let mut l = logs_stderr.lock().await;
-                            l.push_back(format!("[ERROR] {}", line));
-                            if l.len() > MAX_LOG_LINES {
-                                l.pop_front();
-                            }
-                        }
-                    });
-                }
-
-                match child.wait().await {
-                    Ok(status) => {
-                        info!("Background scraper completed with status: {:?}", status);
-                        let success = status.success();
-                        state_clone.last_run_success.store(success, Ordering::SeqCst);
-                        let mut l = state_clone.scraper_logs.lock().await;
-                        if success {
-                            l.push_back("--- Pipeline completed successfully ---".to_string());
-                        } else {
-                            l.push_back(format!("--- Pipeline failed with exit status: {:?} ---", status));
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to wait for background scraper process: {}", e);
-                        state_clone.last_run_success.store(false, Ordering::SeqCst);
-                        let mut l = state_clone.scraper_logs.lock().await;
-                        l.push_back(format!("--- Error waiting for pipeline: {} ---", e));
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to spawn background scraper process ({} {}): {}", python_bin, scraper_script, e);
-                state_clone.last_run_success.store(false, Ordering::SeqCst);
-                let mut l = state_clone.scraper_logs.lock().await;
-                l.push_back(format!("--- Failed to spawn scraper process: {} ---", e));
-            }
-        }
-        
-        state_clone.is_scraping.store(false, Ordering::SeqCst);
-    });
+    spawn_scraper_job(state.clone(), envs, "news scraper pipeline");
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -470,92 +491,13 @@ async fn handle_regen_audio(
         return Err(StatusCode::CONFLICT);
     }
 
-    let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
-    let scraper_script = std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
+    let mut envs: Vec<(&'static str, String)> = vec![("REGEN_DATE", date_str)];
+    if let Some(vs) = params.voice_short { envs.push(("VOICE_SHORT", vs)); }
+    if let Some(vl) = params.voice_long { envs.push(("VOICE_LONG", vl)); }
+    if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
+    if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        info!("Spawning audio regen for date: {}", date_str);
-
-        let mut cmd = tokio::process::Command::new(&python_bin);
-        cmd.arg(&scraper_script)
-           .env("REGEN_DATE", &date_str);
-
-        if let Some(vs) = params.voice_short { cmd.env("VOICE_SHORT", vs); }
-        if let Some(vl) = params.voice_long  { cmd.env("VOICE_LONG", vl); }
-        if let Some(ss) = params.short_sources { cmd.env("SHORT_SOURCES", ss); }
-        if let Some(ls) = params.long_sources  { cmd.env("LONG_SOURCES", ls); }
-
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        {
-            let mut logs = state_clone.scraper_logs.lock().await;
-            logs.clear();
-            logs.push_back(format!("--- Starting audio regen for {} ---", date_str));
-        }
-        state_clone.last_run_success.store(true, Ordering::SeqCst);
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let stdout = child.stdout.take();
-                let stderr = child.stderr.take();
-
-                const MAX_LOG_LINES: usize = 150;
-
-                let logs_stdout = Arc::clone(&state_clone.scraper_logs);
-                if let Some(out) = stdout {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut reader = BufReader::new(out).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let mut l = logs_stdout.lock().await;
-                            l.push_back(line);
-                            if l.len() > MAX_LOG_LINES { l.pop_front(); }
-                        }
-                    });
-                }
-
-                let logs_stderr = Arc::clone(&state_clone.scraper_logs);
-                if let Some(err) = stderr {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut reader = BufReader::new(err).lines();
-                        while let Ok(Some(line)) = reader.next_line().await {
-                            let mut l = logs_stderr.lock().await;
-                            l.push_back(format!("[ERROR] {}", line));
-                            if l.len() > MAX_LOG_LINES { l.pop_front(); }
-                        }
-                    });
-                }
-
-                match child.wait().await {
-                    Ok(status) => {
-                        let success = status.success();
-                        state_clone.last_run_success.store(success, Ordering::SeqCst);
-                        let mut l = state_clone.scraper_logs.lock().await;
-                        if success {
-                            l.push_back("--- Audio regen completed successfully ---".to_string());
-                        } else {
-                            l.push_back(format!("--- Audio regen failed with exit status: {:?} ---", status));
-                        }
-                    }
-                    Err(e) => {
-                        state_clone.last_run_success.store(false, Ordering::SeqCst);
-                        let mut l = state_clone.scraper_logs.lock().await;
-                        l.push_back(format!("--- Error during audio regen: {} ---", e));
-                    }
-                }
-            }
-            Err(e) => {
-                state_clone.last_run_success.store(false, Ordering::SeqCst);
-                let mut l = state_clone.scraper_logs.lock().await;
-                l.push_back(format!("--- Failed to spawn regen process: {} ---", e));
-            }
-        }
-
-        state_clone.is_scraping.store(false, Ordering::SeqCst);
-    });
+    spawn_scraper_job(state.clone(), envs, "audio regen");
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -951,6 +893,19 @@ async fn main() {
 
     info!("Data directory    : {:?}", data_dir);
     info!("Frontend directory: {:?}", frontend_dir);
+
+    // Single source of truth for default sources: materialise config.json on
+    // first boot. The scraper has no embedded defaults and reads this file.
+    let config_path = data_dir.join("config.json");
+    if !config_path.exists() {
+        match serde_json::to_string_pretty(&AppConfig::default()) {
+            Ok(json) => match std::fs::write(&config_path, json) {
+                Ok(_) => info!("Wrote default config.json → {:?}", config_path),
+                Err(e) => error!("Failed to write default config.json: {}", e),
+            },
+            Err(e) => error!("Failed to serialise default config: {}", e),
+        }
+    }
 
     // ── Spawn background cleanup task ─────────────────────────────
     tokio::spawn(cleanup_loop(Arc::clone(&data_dir)));

@@ -50,33 +50,16 @@ CLAUDE_MODEL    = os.getenv("CLAUDE_MODEL", "claude-opus-4-5")
 GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ── News sources ─────────────────────────────────────────────────
-# Add/remove RSS feeds here; each entry is scraped for TOP_N articles.
-RSS_FEEDS = [
-    {"name": "BBC News",  "url": "http://feeds.bbci.co.uk/news/rss.xml"},
-    {"name": "Azure DevOps Blog", "url": "https://devblogs.microsoft.com/devops/feed/"},
-    {"name": "GitHub Engineering Blog", "url": "https://github.blog/feed/"},
-    {"name": "CNCF Blog", "url": "https://www.cncf.io/feed/"},
-    {"name": "Kubernetes Blog", "url": "https://kubernetes.io/feed.xml"},
-    {"name": "Google Cloud Tech Blog", "url": "https://cloudblog.withgoogle.com/rss"},
-    {"name": "HashiCorp Blog", "url": "https://www.hashicorp.com/blog/feed.xml"},
-    {"name": "Ansible Blog", "url": "https://www.ansible.com/blog/rss.xml"},
-    {"name": "Red Hat Blog", "url": "https://www.redhat.com/en/blog/rss.xml"},
-    {"name": "NGINX Blog", "url": "https://www.nginx.com/blog/feed/"},
-    {"name": "Canonical Ubuntu Blog", "url": "https://ubuntu.com/blog/feed"},
-    {"name": "Let's Do DevOps", "url": "https://letsdodevops.substack.com/feed"},
-    {"name": "DevOps Daily", "url": "https://devopsdaily.substack.com/feed"},
-    {"name": "DevOps Bulletin", "url": "https://devopsbulletin.substack.com/feed"},
-    {"name": "DevOpsCube", "url": "https://devopscube.com/feed/"},
-    {"name": "Daily Mail", "url": "https://www.dailymail.com/articles.rss"},
-]
+# Sources are OWNED by config.json (data dir). The web server materialises the
+# canonical defaults there on first boot; the scraper has no embedded list.
+# Both are populated by load_config(), called from the entry points below.
+RSS_FEEDS: list[dict] = []
+MEDIUM_TAGS: list[str] = []
 
 # Sources whose article pages hard-block automated fetches at the network
 # level (Akamai edge, in Daily Mail's case) regardless of browser fingerprint —
 # skip the full-page fetch and use the RSS summary as the content instead.
 NO_BROWSER_FETCH_SOURCES = {"Daily Mail"}
-
-# Medium tags to scrape for top articles
-MEDIUM_TAGS = ["terraform"]
 
 # ── Tuning ───────────────────────────────────────────────────────
 TOP_N                = 10     # Max articles per source
@@ -107,61 +90,92 @@ logging.basicConfig(
 )
 log = logging.getLogger("news-station")
 
-# Load dynamic sources config if it exists
-# Custom prompt is held here and applied where SYSTEM_PROMPT is defined further
-# down — assigning SYSTEM_PROMPT directly here would be overwritten at that point.
-CUSTOM_SYSTEM_PROMPT = None
+# ═══════════════════════════════════════════════════════════════════
+# JSON FILE HELPERS & CONFIGURATION LOADING
+# ═══════════════════════════════════════════════════════════════════
+
 CONFIG_PATH = DATA_DIR / "config.json"
-if CONFIG_PATH.exists():
+
+
+def load_json(path: Path, default):
+    """Read a JSON file, returning `default` if it is missing or unparseable."""
+    if not path.exists():
+        return default
     try:
-        import json
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-            if "rss_feeds" in cfg:
-                new_feeds = []
-                for item in cfg["rss_feeds"]:
-                    url = ""
-                    if isinstance(item, dict):
-                        url = item.get("url", "")
-                    elif isinstance(item, str):
-                        url = item
-
-                    if not url:
-                        continue
-
-                    # Auto-normalize Substack URLs to RSS feeds
-                    if ".substack.com" in url.lower() and not url.lower().endswith("/feed") and not url.lower().endswith("/feed/"):
-                        url = url.rstrip("/") + "/feed"
-
-                    if isinstance(item, dict):
-                        item["url"] = url
-                        new_feeds.append(item)
-                    elif isinstance(item, str):
-                        from urllib.parse import urlparse
-                        domain = urlparse(url).netloc or "News Feed"
-                        name = domain.replace("www.", "")
-                        new_feeds.append({"name": name, "url": url})
-                RSS_FEEDS = new_feeds
-            if "medium_tags" in cfg:
-                MEDIUM_TAGS = cfg["medium_tags"]
-            # Drop silenced sources entirely — no scrape, no extraction, no EPUB
-            silenced = set(cfg.get("silenced_sources") or [])
-            if silenced:
-                before = len(RSS_FEEDS) + len(MEDIUM_TAGS)
-                RSS_FEEDS = [f for f in RSS_FEEDS if f.get("name") not in silenced]
-                # UI labels Medium sources as "Medium/tags/<tag>"; accept the raw tag too
-                MEDIUM_TAGS = [
-                    t for t in MEDIUM_TAGS
-                    if f"Medium/tags/{t}" not in silenced and t not in silenced
-                ]
-                log.info("Silenced %d source(s) via config", before - len(RSS_FEEDS) - len(MEDIUM_TAGS))
-            if "system_prompt" in cfg and cfg["system_prompt"]:
-                CUSTOM_SYSTEM_PROMPT = cfg["system_prompt"]
-                log.info("Loaded custom system prompt from config (%d chars)", len(CUSTOM_SYSTEM_PROMPT))
-            log.info("Loaded custom sources config: %d RSS feeds, %d Medium tags",
-                     len(RSS_FEEDS), len(MEDIUM_TAGS))
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        log.warning("Failed to load config from %s: %s", CONFIG_PATH, e)
+        log.warning("Failed to read %s: %s", path, e)
+        return default
+
+
+def save_json(path: Path, obj) -> None:
+    """Write an object as pretty-printed JSON, logging (not raising) on failure."""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        log.warning("Failed to write %s: %s", path, e)
+
+
+def _normalise_feed(item) -> dict | None:
+    """Coerce a config feed entry (dict or bare URL string) into {name, url}."""
+    url = item.get("url", "") if isinstance(item, dict) else item
+    if not isinstance(url, str) or not url:
+        return None
+
+    # Auto-normalize Substack URLs to RSS feeds
+    if ".substack.com" in url.lower() and not url.lower().rstrip("/").endswith("/feed"):
+        url = url.rstrip("/") + "/feed"
+
+    if isinstance(item, dict):
+        return {**item, "url": url}
+    from urllib.parse import urlparse
+    domain = urlparse(url).netloc or "News Feed"
+    return {"name": domain.replace("www.", ""), "url": url}
+
+
+def load_config() -> None:
+    """
+    Populate RSS_FEEDS / MEDIUM_TAGS / SYSTEM_PROMPT from config.json.
+
+    The web server owns the canonical defaults and writes config.json on its
+    first boot, so a missing file means the server has never run against this
+    data directory — fail loudly rather than silently scraping nothing.
+    """
+    global RSS_FEEDS, MEDIUM_TAGS, SYSTEM_PROMPT
+
+    cfg = load_json(CONFIG_PATH, None)
+    if cfg is None:
+        raise SystemExit(
+            f"config.json not found at {CONFIG_PATH}. Start the web server once "
+            f"(it writes the default config), or create the file manually."
+        )
+
+    RSS_FEEDS = [
+        feed for item in cfg.get("rss_feeds", [])
+        if (feed := _normalise_feed(item)) is not None
+    ]
+    MEDIUM_TAGS = list(cfg.get("medium_tags") or [])
+
+    # Drop silenced sources entirely — no scrape, no extraction, no EPUB
+    silenced = set(cfg.get("silenced_sources") or [])
+    if silenced:
+        before = len(RSS_FEEDS) + len(MEDIUM_TAGS)
+        RSS_FEEDS = [f for f in RSS_FEEDS if f.get("name") not in silenced]
+        # UI labels Medium sources as "Medium/tags/<tag>"; accept the raw tag too
+        MEDIUM_TAGS = [
+            t for t in MEDIUM_TAGS
+            if f"Medium/tags/{t}" not in silenced and t not in silenced
+        ]
+        log.info("Silenced %d source(s) via config", before - len(RSS_FEEDS) - len(MEDIUM_TAGS))
+
+    if cfg.get("system_prompt"):
+        SYSTEM_PROMPT = cfg["system_prompt"]
+        log.info("Loaded custom system prompt from config (%d chars)", len(SYSTEM_PROMPT))
+
+    log.info("Loaded sources config: %d RSS feeds, %d Medium tags",
+             len(RSS_FEEDS), len(MEDIUM_TAGS))
 
 # ═══════════════════════════════════════════════════════════════════
 # LLM BACKENDS
@@ -771,7 +785,8 @@ TONE RULES (apply to both outputs):
   Always use time-neutral greetings (e.g., 'Hello', 'Welcome back', 'Here we go again') rather than 'Good morning' or 'Good evening'.
 """
 
-SYSTEM_PROMPT = CUSTOM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
+# Runtime value; load_config() replaces this with the config.json prompt if set
+SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
 def build_prompt(all_articles: list[dict]) -> str:
@@ -1024,6 +1039,7 @@ async def generate_tts(text: str, output_path: Path, voice: str) -> None:
 # ═══════════════════════════════════════════════════════════════════
 
 async def run_pipeline() -> None:
+    load_config()
     date_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1051,15 +1067,7 @@ async def run_pipeline() -> None:
             all_articles.extend(medium_articles)
 
             # Load previously scraped URLs
-            scraped_urls = set()
-            scraped_urls_path = DATA_DIR / "scraped_urls.json"
-            if scraped_urls_path.exists():
-                try:
-                    import json
-                    with open(scraped_urls_path, "r", encoding="utf-8") as f:
-                        scraped_urls = set(json.load(f))
-                except Exception as e:
-                    log.warning("Failed to load scraped_urls.json: %s", e)
+            scraped_urls = set(load_json(DATA_DIR / "scraped_urls.json", []))
 
             # Filter out already scraped articles
             original_count = len(all_articles)
@@ -1119,13 +1127,8 @@ async def run_pipeline() -> None:
     # Use date-only key (YYYYMMDD) so regen can always find it by date prefix
     date_only = date_str[:8]
     sidecar_path = DATA_DIR / f"articles-{date_only}.json"
-    try:
-        import json as _json
-        with open(sidecar_path, "w", encoding="utf-8") as f:
-            _json.dump(all_articles, f, ensure_ascii=False, indent=2, default=str)
-        log.info("Article sidecar saved → %s", sidecar_path)
-    except Exception as e:
-        log.warning("Failed to save article sidecar: %s", e)
+    save_json(sidecar_path, all_articles)
+    log.info("Article sidecar saved → %s", sidecar_path)
 
     # ── Phase 6: Generate audio tracks ───────────────────────────
     radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
@@ -1136,57 +1139,37 @@ async def run_pipeline() -> None:
         generate_tts(long_podcast, podcast_path, VOICE_LONG),
     )
 
-    # Save newly scraped URLs to persistent file
+    # Save newly scraped URLs to persistent file.
+    # The registry is an ordered list (oldest first) so that truncation drops
+    # the OLDEST entries — a set would make the kept 2000 arbitrary and could
+    # re-scrape old articles.
     new_urls = [a["url"] for a in all_articles if a.get("url")]
     if new_urls:
-        try:
-            import json
-            scraped_urls_path = DATA_DIR / "scraped_urls.json"
-            # Keep the registry as an ordered list (oldest first) so that
-            # truncation drops the OLDEST entries — a set would make the
-            # kept 2000 arbitrary and could re-scrape old articles.
-            scraped_list = []
-            if scraped_urls_path.exists():
-                with open(scraped_urls_path, "r", encoding="utf-8") as f:
-                    scraped_list = json.load(f)
-
-            seen = set(scraped_list)
-            for u in new_urls:
-                if u not in seen:
-                    scraped_list.append(u)
-                    seen.add(u)
-            if len(scraped_list) > 2000:
-                scraped_list = scraped_list[-2000:]
-
-            with open(scraped_urls_path, "w", encoding="utf-8") as f:
-                json.dump(scraped_list, f, indent=2)
-            log.info("Saved %d total scraped URLs to registry", len(scraped_list))
-        except Exception as e:
-            log.warning("Failed to save scraped_urls.json: %s", e)
+        scraped_urls_path = DATA_DIR / "scraped_urls.json"
+        scraped_list = load_json(scraped_urls_path, [])
+        seen = set(scraped_list)
+        for u in new_urls:
+            if u not in seen:
+                scraped_list.append(u)
+                seen.add(u)
+        if len(scraped_list) > 2000:
+            scraped_list = scraped_list[-2000:]
+        save_json(scraped_urls_path, scraped_list)
+        log.info("Saved %d total scraped URLs to registry", len(scraped_list))
 
     # ── Phase 7: Update source activity tracking ─────────────────
     if all_articles:
-        try:
-            import json as _json
-            activity_path = DATA_DIR / "source_activity.json"
-            activity = {}
-            if activity_path.exists():
-                with open(activity_path, "r", encoding="utf-8") as f:
-                    activity = _json.load(f)
-            
-            iso_now = datetime.now().isoformat()
-            for a in all_articles:
-                if src := a.get("source"):
-                    activity[src] = {
-                        "last_seen": iso_now,
-                        "degraded":  src in NO_BROWSER_FETCH_SOURCES,
-                    }
-
-            with open(activity_path, "w", encoding="utf-8") as f:
-                _json.dump(activity, f, indent=2)
-            log.info("Updated source activity tracking for %d sources", len(set(a.get("source") for a in all_articles if a.get("source"))))
-        except Exception as e:
-            log.warning("Failed to update source activity: %s", e)
+        activity_path = DATA_DIR / "source_activity.json"
+        activity = load_json(activity_path, {})
+        iso_now = datetime.now().isoformat()
+        sources_seen = {a["source"] for a in all_articles if a.get("source")}
+        for src in sources_seen:
+            activity[src] = {
+                "last_seen": iso_now,
+                "degraded":  src in NO_BROWSER_FETCH_SOURCES,
+            }
+        save_json(activity_path, activity)
+        log.info("Updated source activity tracking for %d sources", len(sources_seen))
 
     log.info("══════════════════════════════════════════════════")
     log.info("  Pipeline complete. Output files in %s", DATA_DIR)
@@ -1241,32 +1224,28 @@ async def run_regen_audio(date_str: str) -> None:
     re-runs LLM + TTS and overwrites the MP3 files for that date.
     No scraping, no dedup changes, no EPUB rebuild.
     """
-    import json as _json
-    import glob
+    load_config()
 
     # date_str is the YYYYMMDD group key from the media list.
     # Sidecar is saved as articles-YYYYMMDD.json
     date_only = date_str[:8]
     sidecar_path = DATA_DIR / f"articles-{date_only}.json"
 
-    if not sidecar_path.exists():
+    all_articles = load_json(sidecar_path, None)
+    if all_articles is None:
         epub_path = DATA_DIR / f"daily-news-{date_str}.epub"
         if not epub_path.exists():
             log.error(
                 "No article sidecar OR epub found for date '%s'.", date_str
             )
             raise FileNotFoundError(f"Article sidecar and EPUB not found for: {date_str}")
-            
+
         log.warning("No sidecar found. Falling back to extracting articles from existing EPUB: %s", epub_path.name)
         all_articles = extract_articles_from_epub(epub_path)
-        
+
         # Save it back so future regens are faster
-        with open(sidecar_path, "w", encoding="utf-8") as f:
-            _json.dump(all_articles, f, indent=2)
-    else:
-        with open(sidecar_path, "r", encoding="utf-8") as f:
-            all_articles = _json.load(f)
-            
+        save_json(sidecar_path, all_articles)
+
     log.info("Loaded %d articles for regen", len(all_articles))
 
     # Re-apply highlight curation (voice/sources may have changed)
