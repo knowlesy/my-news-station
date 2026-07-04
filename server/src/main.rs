@@ -729,15 +729,33 @@ async fn handle_crosspoint_send(
         return Json(SendResponse { success: false, message: "Invalid device IP".into(), already_sent: false });
     }
 
-    // Locate EPUB file for the requested date
-    let epub_path = state.data_dir.join(format!("news-{}.epub", payload.date));
-    if !epub_path.exists() {
+    // Locate the EPUB for the requested date. The scraper writes
+    // daily-news-{YYYYMMDD-HHMMSS}.epub and the playlist group key is that
+    // embedded date, so a prefix scan finds it; pick the newest on a tie.
+    if payload.date.is_empty() || !payload.date.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        return Json(SendResponse { success: false, message: "Invalid date".into(), already_sent: false });
+    }
+    let prefix = format!("daily-news-{}", payload.date);
+    let epub_path = std::fs::read_dir(&*state.data_dir)
+        .ok()
+        .and_then(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with(&prefix) && n.ends_with(".epub"))
+                        .unwrap_or(false)
+                })
+                .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+        });
+    let Some(epub_path) = epub_path else {
         return Json(SendResponse {
             success: false,
             message: format!("EPUB not found for date {}", payload.date),
             already_sent: false,
         });
-    }
+    };
 
     // Check sent history
     let history_path = state.data_dir.join("crosspoint_sent.json");
@@ -768,7 +786,10 @@ async fn handle_crosspoint_send(
         }),
     };
 
-    let filename = format!("news-{}.epub", payload.date);
+    let filename = epub_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("daily-news-{}.epub", payload.date));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()

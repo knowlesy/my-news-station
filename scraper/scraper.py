@@ -82,6 +82,8 @@ MEDIUM_TAGS = ["terraform"]
 TOP_N                = 10     # Max articles per source
 SIMILARITY_THRESHOLD = 0.6    # TF-IDF cosine sim → "High-Impact Highlight"
 TOP_MEDIUM_AUDIO     = 3      # Top Medium posts forced into audio track
+EXTRACT_CONCURRENCY  = int(os.getenv("EXTRACT_CONCURRENCY", "6"))  # Max simultaneous browser pages
+FEED_TIMEOUT_SECS    = 15     # Per-feed HTTP timeout for RSS fetches
 
 # ── Browser fingerprint ──────────────────────────────────────────
 USER_AGENT = (
@@ -106,6 +108,9 @@ logging.basicConfig(
 log = logging.getLogger("news-station")
 
 # Load dynamic sources config if it exists
+# Custom prompt is held here and applied where SYSTEM_PROMPT is defined further
+# down — assigning SYSTEM_PROMPT directly here would be overwritten at that point.
+CUSTOM_SYSTEM_PROMPT = None
 CONFIG_PATH = DATA_DIR / "config.json"
 if CONFIG_PATH.exists():
     try:
@@ -139,9 +144,20 @@ if CONFIG_PATH.exists():
                 RSS_FEEDS = new_feeds
             if "medium_tags" in cfg:
                 MEDIUM_TAGS = cfg["medium_tags"]
+            # Drop silenced sources entirely — no scrape, no extraction, no EPUB
+            silenced = set(cfg.get("silenced_sources") or [])
+            if silenced:
+                before = len(RSS_FEEDS) + len(MEDIUM_TAGS)
+                RSS_FEEDS = [f for f in RSS_FEEDS if f.get("name") not in silenced]
+                # UI labels Medium sources as "Medium/tags/<tag>"; accept the raw tag too
+                MEDIUM_TAGS = [
+                    t for t in MEDIUM_TAGS
+                    if f"Medium/tags/{t}" not in silenced and t not in silenced
+                ]
+                log.info("Silenced %d source(s) via config", before - len(RSS_FEEDS) - len(MEDIUM_TAGS))
             if "system_prompt" in cfg and cfg["system_prompt"]:
-                SYSTEM_PROMPT = cfg["system_prompt"]
-                log.info("Loaded custom system prompt from config (%d chars)", len(SYSTEM_PROMPT))
+                CUSTOM_SYSTEM_PROMPT = cfg["system_prompt"]
+                log.info("Loaded custom system prompt from config (%d chars)", len(CUSTOM_SYSTEM_PROMPT))
             log.info("Loaded custom sources config: %d RSS feeds, %d Medium tags",
                      len(RSS_FEEDS), len(MEDIUM_TAGS))
     except Exception as e:
@@ -353,7 +369,19 @@ async def fetch_rendered_html(context, url: str) -> str:
 def scrape_rss(feed: dict) -> list[dict]:
     """Parse an RSS feed and return the top TOP_N article stubs."""
     log.info("Parsing RSS: %s (%s)", feed["name"], feed["url"])
-    parsed = feedparser.parse(feed["url"])
+    # Fetch with an explicit timeout — feedparser's own fetching has none, and
+    # a single blackholed feed would otherwise stall the whole pipeline.
+    try:
+        resp = requests.get(
+            feed["url"],
+            timeout=FEED_TIMEOUT_SECS,
+            headers={"User-Agent": USER_AGENT},
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("Failed to fetch RSS %s (%s): %s", feed["name"], feed["url"], exc)
+        return []
+    parsed = feedparser.parse(resp.content)
 
     articles = []
     for entry in parsed.entries[:TOP_N]:
@@ -524,14 +552,6 @@ def extract_author(html: str) -> str:
         pass
     return ""
 
-
-def format_text_to_html(text: str) -> str:
-    """
-    Format plain text/markdown into well-formed XHTML.
-    Protects code blocks fenced with ``` and escapes special characters to prevent parser errors.
-    """
-    if not text:
-        return "<p>(No content available)</p>"
 
 def extract_images(html: str) -> list[str]:
     """Extract up to 3 prominent image URLs from the HTML content."""
@@ -751,7 +771,7 @@ TONE RULES (apply to both outputs):
   Always use time-neutral greetings (e.g., 'Hello', 'Welcome back', 'Here we go again') rather than 'Good morning' or 'Good evening'.
 """
 
-SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
+SYSTEM_PROMPT = CUSTOM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
 
 
 def build_prompt(all_articles: list[dict]) -> str:
@@ -1047,11 +1067,21 @@ async def run_pipeline() -> None:
 
             log.info("Total articles in pool: %d", len(all_articles))
 
-            # Full-page content extraction — run concurrently
-            log.info("Extracting article content (may take a few minutes)…")
+            # Full-page content extraction — concurrent, but capped so a big
+            # article pool can't open hundreds of browser pages at once
+            log.info(
+                "Extracting article content (max %d pages at a time)…",
+                EXTRACT_CONCURRENCY,
+            )
+            extract_sem = asyncio.Semaphore(EXTRACT_CONCURRENCY)
+
+            async def _extract_limited(article: dict) -> dict:
+                async with extract_sem:
+                    return await extract_article_content(context, article)
+
             all_articles = list(
                 await asyncio.gather(
-                    *[extract_article_content(context, a) for a in all_articles]
+                    *[_extract_limited(a) for a in all_articles]
                 )
             )
 
@@ -1239,10 +1269,12 @@ async def run_regen_audio(date_str: str) -> None:
     short_radio  = extract_xml_block(llm_response, "short_radio")
     long_podcast = extract_xml_block(llm_response, "long_podcast")
 
-    # Write new MP3s — overwrite existing files for this date so the player picks them up
-    regen_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    radio_path   = DATA_DIR / f"short-radio-{date_only}.mp3"
-    podcast_path = DATA_DIR / f"long-podcast-{date_only}.mp3"
+    # Name the MP3s with the full group key passed by the frontend (usually
+    # YYYYMMDD-HHMMSS, matching the EPUB's timestamp). The server groups media
+    # by this exact key, so the new audio joins the same playlist entry instead
+    # of appearing as a separate date — and overwrites pipeline audio in place.
+    radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
+    podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
 
     await asyncio.gather(
         generate_tts(short_radio,  radio_path,   VOICE_SHORT),
@@ -1250,8 +1282,8 @@ async def run_regen_audio(date_str: str) -> None:
     )
 
     log.info("══════════════════════════════════════════════════")
-    log.info("  Audio regen complete — %s (files: short-radio-%s.mp3, long-podcast-%s.mp3)",
-             date_str, date_only, date_only)
+    log.info("  Audio regen complete — %s (files: %s, %s)",
+             date_str, radio_path.name, podcast_path.name)
     log.info("══════════════════════════════════════════════════")
 
 
