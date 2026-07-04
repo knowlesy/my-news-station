@@ -31,15 +31,22 @@ jobs:
 
       - name: Set image tag
         id: tag
-        run: echo "date=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "date=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.date }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ steps.tag.outputs.build_date }}
 
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0

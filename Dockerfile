@@ -42,6 +42,10 @@ RUN touch src/main.rs && cargo build --release
 #   • Chromium + all system dependencies
 FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
+# Build identity — passed via --build-arg from CI, surfaced at /api/version
+ARG GIT_SHA=dev
+ARG BUILD_DATE=unknown
+
 # ── System packages ──────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # X Virtual Framebuffer — needed for Playwright in non-headless mode
@@ -107,7 +111,9 @@ ENV DATA_DIR=/app/data \
     LLM_BACKEND=claude_cli \
     # Playwright: run Chromium headless inside Xvfb
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    GIT_SHA=${GIT_SHA} \
+    BUILD_DATE=${BUILD_DATE}
 
 EXPOSE 3000
 

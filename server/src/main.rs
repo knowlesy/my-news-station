@@ -264,14 +264,22 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
 struct VersionResponse {
     version: String,
     date: String,
+    git_sha: String,
+    build_date: String,
 }
 
-/// `GET /api/version` — return the current release version and build date.
+/// `GET /api/version` — return the running image's build identity.
+///
+/// `git_sha` / `build_date` are baked in at image build time via
+/// `--build-arg` (see build-image.yml); "dev"/"unknown" when running
+/// outside that pipeline (e.g. `cargo run` locally).
 async fn handle_version() -> Json<VersionResponse> {
     let date = Utc::now().format("%Y-%m-%d").to_string();
     Json(VersionResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         date,
+        git_sha: std::env::var("GIT_SHA").unwrap_or_else(|_| "dev".to_string()),
+        build_date: std::env::var("BUILD_DATE").unwrap_or_else(|_| "unknown".to_string()),
     })
 }
 

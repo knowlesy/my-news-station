@@ -318,6 +318,21 @@ function renderSourceHealth() {
   });
 }
 
+async function loadVersionDisplay() {
+  const el = $('versionDisplay');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/version');
+    if (!res.ok) throw new Error('Failed to fetch version');
+    const { git_sha, build_date } = await res.json();
+    const shortSha = git_sha && git_sha !== 'dev' ? git_sha.slice(0, 7) : git_sha;
+    el.textContent = `Build: ${build_date} (${shortSha})`;
+  } catch (err) {
+    console.warn('Failed to load version info:', err);
+    el.textContent = '';
+  }
+}
+
 function toggleOptionsModal() {
   if (optionsModal.style.display === 'none' || !optionsModal.style.display) {
     const feedsUrls = currentConfig.rss_feeds.map(f => typeof f === 'string' ? f : f.url).join('\n');
@@ -327,6 +342,7 @@ function toggleOptionsModal() {
     renderSourceHealth();
     syncFromConfig(currentConfig);
     renderCrosspointDevices();
+    loadVersionDisplay();
     optionsModal.style.display = 'flex';
   } else {
     optionsModal.style.display = 'none';
