@@ -1,0 +1,63 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Data (generated at runtime, don't bloat image)
+data/
+*.epub
+*.mp3
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Rust
+server/target/
+Cargo.lock
+
+# Node / npm
+node_modules/
+.npm/
+package-lock.json
+
+# Docker
+docker-compose.yml
+Dockerfile.dev
+.dockerignore
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverrides
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docs & assets (not needed at runtime)
+README.md
+assets/
+*.md
+CLAUDE.md
+
+# CI/CD
+.github/
+
+# Environment (secrets)
+.env
+cookies.json
