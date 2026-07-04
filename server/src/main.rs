@@ -252,6 +252,22 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
 // ROUTE HANDLERS
 // ═══════════════════════════════════════════════════════════════════
 
+/// Version information response.
+#[derive(Debug, Serialize, Deserialize)]
+struct VersionResponse {
+    version: String,
+    date: String,
+}
+
+/// `GET /api/version` — return the current release version and build date.
+async fn handle_version() -> Json<VersionResponse> {
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    Json(VersionResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        date,
+    })
+}
+
 /// `GET /api/media` — return a JSON list of all available media grouped by date.
 async fn handle_list_media(
     State(state): State<AppState>,
@@ -919,6 +935,8 @@ async fn main() {
     };
 
     let app = Router::new()
+        // Version check for frontend upgrades
+        .route("/api/version", get(handle_version))
         // JSON API for the frontend to discover media files
         .route("/api/media", get(handle_list_media))
         .route("/api/config", get(handle_get_config).post(handle_post_config))

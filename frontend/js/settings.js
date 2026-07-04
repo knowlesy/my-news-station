@@ -334,6 +334,13 @@ $('optionsBtn').addEventListener('click', toggleOptionsModal);
 $('closeOptionsBtn').addEventListener('click', toggleOptionsModal);
 $('cancelOptionsBtn').addEventListener('click', toggleOptionsModal);
 
+// Close modal when clicking outside (on overlay/background)
+optionsModal.addEventListener('click', (e) => {
+  if (e.target === optionsModal) {
+    optionsModal.style.display = 'none';
+  }
+});
+
 const DEFAULT_SYSTEM_PROMPT = `You are an advanced news editing and broadcasting engine with a distinct personality. You are provided with a complete daily pool of articles, along with a marked list of curated audio highlights. Process this text and wrap your outputs in these designated XML tags:
 
 TONE RULES (apply to both outputs):
