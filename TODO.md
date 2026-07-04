@@ -1,2 +1,3 @@
- - create an rss feed for the epub files 
- - allow for pay wall content and how to manage that 
+ - OPDS: add optional basic-auth (username/password) if the station ever leaves the trusted home network
+ - remove the send to x4 config — deprecate once OPDS pull has been tested on the device for a while
+ - allow for pay wall content and how to manage that (Phase 2: auto-signin with per-site credentials)

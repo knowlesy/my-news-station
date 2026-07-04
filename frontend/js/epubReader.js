@@ -1,117 +1,16 @@
-// ── epub.js reader: loading, theming, chapter navigation ────────
+// ── epub.js readers: main edition + TLDR digest ─────────────────
+// Two independent reader instances built from one factory: the full
+// daily-news EPUB on top, and the companion TLDR digest below it.
 import { $, toast, formatDate } from './utils.js';
 import { updateSendButton } from './crosspoint.js';
 
-let epubBook      = null; // epub.js Book instance
-let epubRendition = null;
-let currentChapterIndex = 0;
-let totalChapters = 0;
-
-const epubViewer       = $('epub-viewer');
-const epubSubtitle     = $('epubSubtitle');
-const epubPageInfo     = $('epubPageInfo');
-const epubDownloadBtn  = $('epubDownloadBtn');
-const prevChapterBtn   = $('prevChapter');
-const nextChapterBtn   = $('nextChapter');
-const chapterIndicator = $('chapterIndicator');
-
-export async function loadEpub(filename, dateStr) {
-  // Tear down previous book
-  if (epubBook) {
-    try { await epubBook.destroy(); } catch (_) {}
-    epubBook = null;
-    epubRendition = null;
-  }
-  prevChapterBtn.disabled = true;
-  nextChapterBtn.disabled = true;
-  chapterIndicator.textContent = '—';
-  epubPageInfo.textContent = '—';
-
-  if (!filename) {
-    epubViewer.innerHTML = `
-      <div class="epub-empty">
-        <div class="big-icon">📄</div>
-        <p>EPUB not available for ${formatDate(dateStr)}</p>
-        <p style="font-size:0.75rem;color:var(--ctp-overlay0)">Run the scraper to generate the book</p>
-      </div>`;
-    epubSubtitle.textContent = 'No book for this edition';
-    epubDownloadBtn.style.display = 'none';
-    $('sendToX4Btn').style.display = 'none';
-    return;
-  }
-
-  const epubUrl = `/media/${encodeURIComponent(filename)}`;
-
-  epubSubtitle.textContent = `Loading ${formatDate(dateStr)} edition…`;
-  epubViewer.innerHTML = `<div class="epub-empty"><div class="big-icon skeleton" style="width:80px;height:80px;border-radius:50%;background:var(--ctp-surface0)"></div><p style="margin-top:1rem">Loading book…</p></div>`;
-
-  try {
-    epubBook = ePub(epubUrl);
-    epubViewer.innerHTML = ''; // Clear placeholder before rendering
-
-    epubRendition = epubBook.renderTo('epub-viewer', {
-      width: '100%',
-      height: 640,
-      flow: 'scrolled-doc',
-      manager: 'default',
-    });
-
-    await epubRendition.display();
-
-    // Apply Catppuccin-matched styles inside the iframe
-    injectEpubStyles();
-
-    // Load spine for chapter navigation
-    await epubBook.ready;
-    const spine = epubBook.spine;
-    totalChapters = spine.length;
-    currentChapterIndex = 0;
-
-    updateChapterUI();
-    prevChapterBtn.disabled = false;
-    nextChapterBtn.disabled = totalChapters <= 1;
-
-    epubSubtitle.textContent = `${formatDate(dateStr)} · ${totalChapters} chapters`;
-    epubPageInfo.textContent = `Chapter 1 of ${totalChapters}`;
-
-    // Download link
-    epubDownloadBtn.href = epubUrl;
-    epubDownloadBtn.download = filename;
-    epubDownloadBtn.style.display = 'inline-flex';
-    updateSendButton();
-
-    // Hook into rendition relocations to track chapter
-    epubRendition.on('relocated', location => {
-      const spineItem = location.start && location.start.index;
-      if (typeof spineItem === 'number') {
-        currentChapterIndex = spineItem;
-        updateChapterUI();
-        epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
-      }
-    });
-
-    toast(`Loaded ${formatDate(dateStr)} edition`, 'success');
-
-  } catch (err) {
-    console.error('EPUB load error:', err);
-    epubViewer.innerHTML = `
-      <div class="epub-empty">
-        <div class="big-icon">⚠️</div>
-        <p>Failed to load EPUB</p>
-        <p style="font-size:0.75rem;color:var(--ctp-overlay0)">${err.message}</p>
-      </div>`;
-    epubSubtitle.textContent = 'Error loading book';
-    toast(`EPUB error: ${err.message}`, 'error');
-  }
-}
-
-// ── Apply CSS into the epub.js iframe ────────────────────────────
-function injectEpubStyles() {
-  if (!epubRendition) return;
+// ── Shared: Catppuccin theme injected into the epub.js iframe ────
+function injectEpubStyles(rendition) {
+  if (!rendition) return;
   const theme = document.documentElement.getAttribute('data-theme') || 'mocha';
-  const isDark = ['mocha','macchiato','frappe'].includes(theme);
+  const isDark = ['mocha', 'macchiato', 'frappe'].includes(theme);
 
-  epubRendition.themes.register('ctp', {
+  rendition.themes.register('ctp', {
     body: {
       'font-family': "'Georgia', serif",
       'line-height': '1.8',
@@ -152,41 +51,193 @@ function injectEpubStyles() {
       'font-size': 'inherit'
     }
   });
-  epubRendition.themes.select('ctp');
+  rendition.themes.select('ctp');
 }
 
-// ── Chapter navigation helpers ───────────────────────────────────
-function updateChapterUI() {
-  prevChapterBtn.disabled = currentChapterIndex <= 0;
-  nextChapterBtn.disabled = currentChapterIndex >= totalChapters - 1;
-  chapterIndicator.textContent = `${currentChapterIndex + 1} / ${totalChapters}`;
+// ── Reader factory ───────────────────────────────────────────────
+function createReader(cfg) {
+  const viewer       = $(cfg.viewerId);
+  const subtitle     = $(cfg.subtitleId);
+  const pageInfo     = $(cfg.pageInfoId);
+  const downloadBtn  = $(cfg.downloadId);
+  const prevBtn      = $(cfg.prevId);
+  const nextBtn      = $(cfg.nextId);
+  const indicator    = $(cfg.indicatorId);
+
+  let book = null;
+  let rendition = null;
+  let currentChapterIndex = 0;
+  let totalChapters = 0;
+
+  function updateChapterUI() {
+    prevBtn.disabled = currentChapterIndex <= 0;
+    nextBtn.disabled = currentChapterIndex >= totalChapters - 1;
+    indicator.textContent = `${currentChapterIndex + 1} / ${totalChapters}`;
+  }
+
+  async function load(filename, dateStr) {
+    // Tear down previous book
+    if (book) {
+      try { await book.destroy(); } catch (_) {}
+      book = null;
+      rendition = null;
+    }
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    indicator.textContent = '—';
+    pageInfo.textContent = '—';
+
+    if (!filename) {
+      viewer.innerHTML = `
+        <div class="epub-empty">
+          <div class="big-icon">${cfg.emptyIcon}</div>
+          <p>${cfg.label} not available for ${formatDate(dateStr)}</p>
+          <p style="font-size:0.75rem;color:var(--ctp-overlay0)">${cfg.emptyHint}</p>
+        </div>`;
+      subtitle.textContent = `No ${cfg.label.toLowerCase()} for this edition`;
+      downloadBtn.style.display = 'none';
+      if (cfg.isMain) $('sendToX4Btn').style.display = 'none';
+      return;
+    }
+
+    const epubUrl = `/media/${encodeURIComponent(filename)}`;
+
+    subtitle.textContent = `Loading ${formatDate(dateStr)} edition…`;
+    viewer.innerHTML = `<div class="epub-empty"><div class="big-icon skeleton" style="width:80px;height:80px;border-radius:50%;background:var(--ctp-surface0)"></div><p style="margin-top:1rem">Loading book…</p></div>`;
+
+    try {
+      book = ePub(epubUrl);
+      viewer.innerHTML = ''; // Clear placeholder before rendering
+
+      rendition = book.renderTo(cfg.viewerId, {
+        width: '100%',
+        height: cfg.height,
+        flow: 'scrolled-doc',
+        manager: 'default',
+      });
+
+      await rendition.display();
+      injectEpubStyles(rendition);
+
+      // Load spine for chapter navigation
+      await book.ready;
+      totalChapters = book.spine.length;
+      currentChapterIndex = 0;
+
+      updateChapterUI();
+      prevBtn.disabled = false;
+      nextBtn.disabled = totalChapters <= 1;
+
+      subtitle.textContent = `${formatDate(dateStr)} · ${totalChapters} chapters`;
+      pageInfo.textContent = `Chapter 1 of ${totalChapters}`;
+
+      // Download link
+      downloadBtn.href = epubUrl;
+      downloadBtn.download = filename;
+      downloadBtn.style.display = 'inline-flex';
+      if (cfg.isMain) updateSendButton();
+
+      // Hook into rendition relocations to track chapter
+      rendition.on('relocated', location => {
+        const spineItem = location.start && location.start.index;
+        if (typeof spineItem === 'number') {
+          currentChapterIndex = spineItem;
+          updateChapterUI();
+          pageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+        }
+      });
+
+      if (cfg.isMain) toast(`Loaded ${formatDate(dateStr)} edition`, 'success');
+
+    } catch (err) {
+      console.error('EPUB load error:', err);
+      viewer.innerHTML = `
+        <div class="epub-empty">
+          <div class="big-icon">⚠️</div>
+          <p>Failed to load EPUB</p>
+          <p style="font-size:0.75rem;color:var(--ctp-overlay0)">${err.message}</p>
+        </div>`;
+      subtitle.textContent = 'Error loading book';
+      if (cfg.isMain) toast(`EPUB error: ${err.message}`, 'error');
+    }
+  }
+
+  prevBtn.addEventListener('click', async () => {
+    if (!rendition || currentChapterIndex <= 0) return;
+    await rendition.prev();
+    currentChapterIndex = Math.max(0, currentChapterIndex - 1);
+    updateChapterUI();
+    pageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+  });
+
+  nextBtn.addEventListener('click', async () => {
+    if (!rendition || currentChapterIndex >= totalChapters - 1) return;
+    await rendition.next();
+    currentChapterIndex = Math.min(totalChapters - 1, currentChapterIndex + 1);
+    updateChapterUI();
+    pageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+  });
+
+  return {
+    load,
+    reinjectStyles: () => injectEpubStyles(rendition),
+    hasRendition: () => !!rendition,
+    prevBtn,
+    nextBtn,
+  };
 }
 
-prevChapterBtn.addEventListener('click', async () => {
-  if (!epubRendition || currentChapterIndex <= 0) return;
-  await epubRendition.prev();
-  currentChapterIndex = Math.max(0, currentChapterIndex - 1);
-  updateChapterUI();
-  epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+// ── Instances ────────────────────────────────────────────────────
+const mainReader = createReader({
+  viewerId:   'epub-viewer',
+  subtitleId: 'epubSubtitle',
+  pageInfoId: 'epubPageInfo',
+  downloadId: 'epubDownloadBtn',
+  prevId:     'prevChapter',
+  nextId:     'nextChapter',
+  indicatorId: 'chapterIndicator',
+  height:     640,
+  emptyIcon:  '📄',
+  label:      'EPUB',
+  emptyHint:  'Run the scraper to generate the book',
+  isMain:     true,
 });
 
-nextChapterBtn.addEventListener('click', async () => {
-  if (!epubRendition || currentChapterIndex >= totalChapters - 1) return;
-  await epubRendition.next();
-  currentChapterIndex = Math.min(totalChapters - 1, currentChapterIndex + 1);
-  updateChapterUI();
-  epubPageInfo.textContent = `Chapter ${currentChapterIndex + 1} of ${totalChapters}`;
+const tldrReader = createReader({
+  viewerId:   'tldr-viewer',
+  subtitleId: 'tldrSubtitle',
+  pageInfoId: 'tldrPageInfo',
+  downloadId: 'tldrDownloadBtn',
+  prevId:     'tldrPrevChapter',
+  nextId:     'tldrNextChapter',
+  indicatorId: 'tldrChapterIndicator',
+  height:     480,
+  emptyIcon:  '⚡',
+  label:      'TLDR digest',
+  emptyHint:  'Generated alongside new editions from now on',
+  isMain:     false,
 });
+
+export async function loadEpub(filename, dateStr) {
+  return mainReader.load(filename, dateStr);
+}
+
+export async function loadTldrEpub(filename, dateStr) {
+  return tldrReader.load(filename, dateStr);
+}
 
 // Re-inject EPUB styles when theme changes
 $('themeSelect').addEventListener('change', () => {
-  setTimeout(injectEpubStyles, 50); // wait for CSS vars to propagate
+  setTimeout(() => {
+    mainReader.reinjectStyles();
+    tldrReader.reinjectStyles();
+  }, 50); // wait for CSS vars to propagate
 });
 
-// ── Keyboard navigation for EPUB ─────────────────────────────────
+// ── Keyboard navigation (main reader only, as before) ───────────
 document.addEventListener('keydown', e => {
-  if (!epubRendition) return;
+  if (!mainReader.hasRendition()) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  if (e.key === 'ArrowLeft')  prevChapterBtn.click();
-  if (e.key === 'ArrowRight') nextChapterBtn.click();
+  if (e.key === 'ArrowLeft')  mainReader.prevBtn.click();
+  if (e.key === 'ArrowRight') mainReader.nextBtn.click();
 });

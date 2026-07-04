@@ -890,6 +890,13 @@ def build_prompt(all_articles: list[dict]) -> str:
             f"{a.get('content') or a.get('summary', '(no content)')}\n"
         )
 
+    # Compact index of EVERY article in the pool (not just highlights) for the
+    # TLDR digest — trimmed hard so 30+ articles don't blow up the prompt.
+    tldr_index = []
+    for a in all_articles:
+        snippet = (a.get("content") or a.get("summary") or "").strip()[:400]
+        tldr_index.append(f"[{a['source']}] {a['title']}\n{snippet}")
+
     return "\n\n".join([
         SYSTEM_PROMPT,
         f"── CRITICAL CONTENT FILTER RULES ──\n"
@@ -897,8 +904,22 @@ def build_prompt(all_articles: list[dict]) -> str:
         f"{short_summary}\n\n"
         f"- For <long_podcast>: You must ONLY cover the following curated stories (from {', '.join(long_sources)}):\n"
         f"{long_summary}\n",
+        "── THIRD OUTPUT: <tldr_digest> ──\n"
+        "In addition to the two audio scripts, produce a <tldr_digest> block covering EVERY "
+        "article listed in the TLDR INDEX below (this index is ONLY for the digest — do not "
+        "let it influence <short_radio> or <long_podcast>). For each article write ONE plain, "
+        "jargon-free sentence (two at most) saying what happened and why it matters. No wit "
+        "needed here — pure clarity.\n"
+        "STRICT FORMAT (it is parsed by a machine):\n"
+        "[[Source Name]]\n"
+        "- Article Title :: the one-sentence summary\n"
+        "- Next Article Title :: its summary\n"
+        "Repeat a [[Source Name]] line for each source group. No markdown, no other prose, "
+        "no text outside this structure inside the block.",
         f"── FULL DAILY POOL (FOR DETAILS) ──",
         "\n\n".join(pool_sections),
+        f"── TLDR INDEX (ALL ARTICLES, FOR <tldr_digest> ONLY) ──",
+        "\n\n".join(tldr_index),
     ])
 
 
@@ -1093,6 +1114,122 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
     return output_path
 
 
+def _parse_tldr_sections(tldr_text: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """
+    Parse the LLM's <tldr_digest> block into (source, [(title, summary)]) groups.
+
+    Expected format (instructed in build_prompt):
+        [[Source Name]]
+        - Article Title :: one-sentence summary
+    Bullets before any [[Source]] marker, or with no '::' separator, are
+    tolerated rather than dropped.
+    """
+    sections: list[tuple[str, list[tuple[str, str]]]] = []
+    current_items: list[tuple[str, str]] = []
+    current_source = "News"
+
+    for raw_line in tldr_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        marker = re.match(r"^\[\[(.+?)\]\]$", line)
+        if marker:
+            if current_items:
+                sections.append((current_source, current_items))
+            current_source = marker.group(1).strip()
+            current_items = []
+            continue
+        if line.startswith("- "):
+            body = line[2:].strip()
+            if "::" in body:
+                title, summary = body.split("::", 1)
+                current_items.append((title.strip(), summary.strip()))
+            else:
+                current_items.append(("", body))
+    if current_items:
+        sections.append((current_source, current_items))
+    return sections
+
+
+def build_tldr_epub(tldr_text: str, date_str: str) -> Path | None:
+    """
+    Build the companion TLDR digest EPUB (daily-tldr-{date}.epub): one chapter
+    per source, one short summary per article. Falls back to a single chapter
+    with the raw text if the LLM ignored the [[Source]] format.
+    """
+    from html import escape as _esc
+
+    if not tldr_text.strip():
+        log.warning("TLDR digest text is empty — skipping TLDR EPUB")
+        return None
+
+    nice_date = datetime.strptime(date_str[:8], "%Y%m%d").strftime("%d %B %Y")
+
+    book = epub.EpubBook()
+    book.set_identifier(f"daily-tldr-{date_str}")
+    book.set_title(f"TLDR Digest — {nice_date}")
+    book.set_language("en")
+    book.add_author("AI News Station")
+    book.add_metadata("DC", "description", "One-sentence summaries of the day's news")
+
+    css_item = epub.EpubItem(
+        uid="main-style",
+        file_name="style/main.css",
+        media_type="text/css",
+        content=EPUB_CSS,
+    )
+    book.add_item(css_item)
+
+    sections = _parse_tldr_sections(tldr_text)
+
+    chapters: list[epub.EpubHtml] = []
+    if sections:
+        for idx, (source, items) in enumerate(sections):
+            entries_html = ""
+            for title, summary in items:
+                if title:
+                    entries_html += (
+                        f"<p><strong>{_esc(title)}</strong><br/>{_esc(summary)}</p>"
+                    )
+                else:
+                    entries_html += f"<p>{_esc(summary)}</p>"
+            chapter = epub.EpubHtml(
+                title=source,
+                file_name=f"text/tldr_{idx:03d}.xhtml",
+                lang="en",
+            )
+            chapter.set_content(
+                f"<html><head><title>{_esc(source)}</title>"
+                f'<link rel="stylesheet" type="text/css" href="../style/main.css"/></head>'
+                f"<body><h2>{_esc(source)}</h2>{entries_html}</body></html>"
+            )
+            chapter.add_item(css_item)
+            book.add_item(chapter)
+            chapters.append(chapter)
+    else:
+        # LLM ignored the format — one chapter with the raw text, still readable
+        log.warning("TLDR digest did not match expected format — single-chapter fallback")
+        chapter = epub.EpubHtml(title="TLDR Digest", file_name="text/tldr_000.xhtml", lang="en")
+        chapter.set_content(
+            f"<html><head><title>TLDR Digest</title>"
+            f'<link rel="stylesheet" type="text/css" href="../style/main.css"/></head>'
+            f"<body><h2>TLDR Digest</h2>{format_text_to_html(tldr_text)}</body></html>"
+        )
+        chapter.add_item(css_item)
+        book.add_item(chapter)
+        chapters.append(chapter)
+
+    book.toc = chapters
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", *chapters]
+
+    output_path = DATA_DIR / f"daily-tldr-{date_str}.epub"
+    epub.write_epub(str(output_path), book)
+    log.info("TLDR EPUB written → %s (%d chapters)", output_path, len(chapters))
+    return output_path
+
+
 # ═══════════════════════════════════════════════════════════════════
 # TEXT-TO-SPEECH (edge-tts)
 # ═══════════════════════════════════════════════════════════════════
@@ -1218,9 +1355,11 @@ async def run_pipeline() -> None:
     # ── Phase 4: Parse XML blocks ─────────────────────────────────
     short_radio  = extract_xml_block(llm_response, "short_radio")
     long_podcast = extract_xml_block(llm_response, "long_podcast")
+    tldr_digest  = extract_xml_block(llm_response, "tldr_digest")
 
-    # ── Phase 5: Build EPUB ───────────────────────────────────────
+    # ── Phase 5: Build EPUBs (full edition + TLDR digest) ────────
     build_epub(all_articles, date_str)
+    build_tldr_epub(tldr_digest, date_str)
 
     # ── Phase 5b: Save article sidecar for later audio regen ─────
     # Use date-only key (YYYYMMDD) so regen can always find it by date prefix
@@ -1359,6 +1498,11 @@ async def run_regen_audio(date_str: str) -> None:
 
     short_radio  = extract_xml_block(llm_response, "short_radio")
     long_podcast = extract_xml_block(llm_response, "long_podcast")
+    tldr_digest  = extract_xml_block(llm_response, "tldr_digest")
+
+    # Regen re-calls the LLM anyway, so refresh the TLDR digest too
+    # (overwrites the existing daily-tldr file for this date key)
+    build_tldr_epub(tldr_digest, date_str)
 
     # Name the MP3s with the full group key passed by the frontend (usually
     # YYYYMMDD-HHMMSS, matching the EPUB's timestamp). The server groups media

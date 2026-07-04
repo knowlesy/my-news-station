@@ -1,6 +1,6 @@
 // ── Media library: playlist, date selection, audio players ──────
 import { $, toast, setStatus, formatDate, isNewEdition } from './utils.js';
-import { loadEpub } from './epubReader.js';
+import { loadEpub, loadTldrEpub } from './epubReader.js';
 import { refreshSendButtonForDate } from './crosspoint.js';
 import { isScrapingActive } from './scraperStatus.js';
 
@@ -82,6 +82,7 @@ export function renderPlaylist() {
       badgesHtml += '<span class="badge" style="background:var(--ctp-green); color:var(--ctp-crust); font-weight:600; animation: pulse-dot 1.5s infinite;">✨ New</span>';
     }
     if (entry.epub) badgesHtml += '<span class="badge">📖 Book</span>';
+    if (entry.tldr) badgesHtml += '<span class="badge">⚡ TLDR</span>';
     if (entry.radio) badgesHtml += '<span class="badge">📻 Radio</span>';
     if (entry.podcast) badgesHtml += '<span class="badge">🎧 Podcast</span>';
 
@@ -129,6 +130,7 @@ export function selectDate(dateStr) {
   renderAudioPlayer('radio',   entry.radio,   dateStr, entry);
   renderAudioPlayer('podcast', entry.podcast, dateStr, entry);
   loadEpub(entry.epub, dateStr);
+  loadTldrEpub(entry.tldr, dateStr);
   refreshSendButtonForDate();
 }
 

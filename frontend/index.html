@@ -558,6 +558,14 @@
       display: block;
     }
 
+    #tldr-viewer {
+      width: 100%;
+      height: 480px;
+      background: var(--ctp-base);
+      border: none;
+      display: block;
+    }
+
     .epub-empty {
       height: 300px;
       display: flex;
@@ -640,6 +648,7 @@
       .site-header { padding: 0.875rem 1rem; }
       .app-wrapper  { padding: 1rem 0.875rem 3rem; }
       #epub-viewer  { height: 480px; }
+      #tldr-viewer  { height: 360px; }
       .players-grid { grid-template-columns: 1fr; }
     }
 
@@ -1031,6 +1040,49 @@
            style="display:none"
            aria-label="Download EPUB file">
           ⬇ Download EPUB
+        </a>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         TLDR DIGEST READER
+         ════════════════════════════════════════════════════════ -->
+    <section class="epub-section" aria-labelledby="tldrHeading">
+      <div class="epub-toolbar">
+        <div class="epub-title-area">
+          <div class="epub-icon" aria-hidden="true">⚡</div>
+          <div>
+            <div class="epub-title" id="tldrHeading">TLDR Digest</div>
+            <div class="epub-subtitle" id="tldrSubtitle">One-sentence summaries of every story</div>
+          </div>
+        </div>
+        <div class="epub-nav-controls" role="navigation" aria-label="TLDR chapter navigation">
+          <button id="tldrPrevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous TLDR chapter">‹</button>
+          <span   class="chapter-indicator" id="tldrChapterIndicator" aria-live="polite">—</span>
+          <button id="tldrNextChapter" class="btn btn-nav" disabled title="Next chapter" aria-label="Next TLDR chapter">›</button>
+        </div>
+      </div>
+
+      <!-- epub.js renders into this element -->
+      <div id="tldr-viewer" role="document" aria-label="TLDR digest viewer">
+        <div class="epub-empty">
+          <div class="big-icon" aria-hidden="true">⚡</div>
+          <p>The quick-read digest will appear here</p>
+          <p style="font-size:0.75rem;color:var(--ctp-overlay0)">
+            Generated alongside each new edition
+          </p>
+        </div>
+      </div>
+
+      <div class="epub-footer">
+        <span id="tldrPageInfo" style="font-size:0.78rem;color:var(--ctp-subtext0)">—</span>
+        <a id="tldrDownloadBtn"
+           class="btn btn-download"
+           href="#"
+           download
+           style="display:none"
+           aria-label="Download TLDR EPUB file">
+          ⬇ Download TLDR
         </a>
       </div>
     </section>

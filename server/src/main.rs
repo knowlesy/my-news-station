@@ -5,6 +5,7 @@
 //! ║    GET  /            → serves ./frontend/ (static SPA)           ║
 //! ║    GET  /media/*     → serves ./data/     (EPUB + MP3 files)     ║
 //! ║    GET  /api/media   → JSON list of available dated media files  ║
+//! ║    GET  /opds        → OPDS catalog of EPUBs for e-readers       ║
 //! ║                                                                  ║
 //! ║  Background task: every 6 h, delete data files older than 10 d  ║
 //! ╚══════════════════════════════════════════════════════════════════╝
@@ -53,6 +54,8 @@ struct MediaEntry {
     date:    String,
     /// Filename of the EPUB book, if generated for this date
     epub:    Option<String>,
+    /// Filename of the companion TLDR digest EPUB, if generated
+    tldr:    Option<String>,
     /// Filename of the short radio briefing MP3, if generated
     radio:   Option<String>,
     /// Filename of the long podcast MP3, if generated
@@ -236,12 +239,15 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
         let media = groups.entry(date.clone()).or_insert_with(|| MediaEntry {
             date:    date.clone(),
             epub:    None,
+            tldr:    None,
             radio:   None,
             podcast: None,
         });
 
         if file_name.starts_with("daily-news-") && file_name.ends_with(".epub") {
             media.epub = Some(file_name);
+        } else if file_name.starts_with("daily-tldr-") && file_name.ends_with(".epub") {
+            media.tldr = Some(file_name);
         } else if file_name.starts_with("short-radio-") && file_name.ends_with(".mp3") {
             media.radio = Some(file_name);
         } else if file_name.starts_with("long-podcast-") && file_name.ends_with(".mp3") {
@@ -289,6 +295,97 @@ async fn handle_list_media(
 ) -> Result<Json<MediaListResponse>, StatusCode> {
     let dates = list_media_files(&state.data_dir);
     Ok(Json(MediaListResponse { dates }))
+}
+
+/// Minimal XML entity escaping for text nodes and attribute values.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// `GET /opds` — OPDS 1.2 acquisition feed of every generated EPUB, newest
+/// first, so e-readers (the X4's Crosspoint OPDS browser, KOReader, etc.)
+/// can pull books themselves instead of us pushing files to the device.
+///
+/// No auth for now — the station lives on a trusted home network. If that
+/// ever changes, wrap this route and /media in basic-auth middleware.
+async fn handle_opds(State(state): State<AppState>) -> impl IntoResponse {
+    // (filename, modified) for every epub in the data dir
+    let mut books: Vec<(String, DateTime<Utc>)> = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(&*state.data_dir) {
+        for entry in read_dir.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.ends_with(".epub") {
+                continue;
+            }
+            let mtime = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(DateTime::<Utc>::from)
+                .unwrap_or_else(Utc::now);
+            books.push((file_name, mtime));
+        }
+    }
+    books.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+
+    let feed_updated = books
+        .first()
+        .map(|(_, m)| *m)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339();
+
+    let date_re = Regex::new(r"\d{8}").expect("Invalid date regex");
+    let mut entries = String::new();
+    for (file_name, mtime) in &books {
+        let nice_date = date_re
+            .find(file_name)
+            .and_then(|m| chrono::NaiveDate::parse_from_str(m.as_str(), "%Y%m%d").ok())
+            .map(|d| d.format("%d %B %Y").to_string())
+            .unwrap_or_else(|| file_name.clone());
+        let title = if file_name.starts_with("daily-tldr-") {
+            format!("TLDR Digest — {}", nice_date)
+        } else {
+            format!("Daily News — {}", nice_date)
+        };
+        entries.push_str(&format!(
+            r#"  <entry>
+    <id>urn:my-news-station:{id}</id>
+    <title>{title}</title>
+    <updated>{updated}</updated>
+    <author><name>AI News Station</name></author>
+    <link rel="http://opds-spec.org/acquisition" href="/media/{href}" type="application/epub+zip"/>
+  </entry>
+"#,
+            id = xml_escape(file_name),
+            title = xml_escape(&title),
+            updated = mtime.to_rfc3339(),
+            href = xml_escape(file_name),
+        ));
+    }
+
+    let feed = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:my-news-station:catalog</id>
+  <title>My News Station</title>
+  <updated>{feed_updated}</updated>
+  <author><name>AI News Station</name></author>
+  <link rel="self" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+{entries}</feed>
+"#
+    );
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/atom+xml;profile=opds-catalog;kind=acquisition",
+        )],
+        feed,
+    )
 }
 
 /// `GET /api/config` — read the current sources configuration from config.json or return defaults.
@@ -986,6 +1083,7 @@ async fn main() {
         .route("/api/version", get(handle_version))
         // JSON API for the frontend to discover media files
         .route("/api/media", get(handle_list_media))
+        .route("/opds", get(handle_opds))
         .route("/api/config", get(handle_get_config).post(handle_post_config))
         .route("/api/sources/activity", get(handle_get_source_activity))
         .route("/api/scrape/status", get(handle_scrape_status))
