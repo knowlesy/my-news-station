@@ -39,25 +39,3 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.date }}
-
-      - name: Create GitHub Release
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          DATE=$(date +%Y-%m-%d)
-          # Count existing tags for this date to generate sequence number
-          COUNT=$(git tag -l "v${DATE}-*" 2>/dev/null | wc -l)
-          SEQ=$((COUNT + 1))
-          TAG="v${DATE}-$(printf "%03d" $SEQ)"
-
-          # Extract changelog section for this date
-          CHANGELOG=$(sed -n "/## \[${DATE}\]/,/## \[/p" CHANGELOG.md | head -n -1 | tail -n +2)
-
-          # Create release
-          gh release create "$TAG" \
-            --title "Release $TAG" \
-            --notes "${CHANGELOG:-No changes documented}" \
-            --target "${{ github.sha }}"
-
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
