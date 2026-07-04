@@ -1,5 +1,7 @@
 # My News Station
 
+[![Build and push image](https://github.com/knowlesy/my-news-station/actions/workflows/build-image.yml/badge.svg)](https://github.com/knowlesy/my-news-station/actions/workflows/build-image.yml)
+
 A self-hosted, automated daily news media station. Each morning the scraper pulls BBC News, curated DevOps/CI-CD blogs, Substack publications, and Medium sources, curates them with AI, and generates:
 
 - 📖 A full **EPUB** daily newspaper (every article, Reader-Mode cleaned)
