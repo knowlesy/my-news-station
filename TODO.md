@@ -1,0 +1,2 @@
+ - create an rss feed for the epub files 
+ - allow for pay wall content and how to manage that 
