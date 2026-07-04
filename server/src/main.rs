@@ -313,12 +313,44 @@ async fn handle_get_config(
 }
 
 /// `POST /api/config` — save the new sources configuration to config.json.
+///
+/// Merges onto the existing on-disk config at the JSON-object level rather
+/// than trusting the payload as the complete state: almost every AppConfig
+/// field has `#[serde(default)]`, so a payload missing a field (a stale
+/// browser tab, a partial save from one settings panel) would otherwise
+/// silently reset that field to its zero value and wipe it on write.
 async fn handle_post_config(
     State(state): State<AppState>,
-    Json(payload): Json<AppConfig>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<StatusCode, StatusCode> {
     let path = state.data_dir.join("config.json");
-    if let Ok(content) = serde_json::to_string_pretty(&payload) {
+
+    let existing = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    } else {
+        None
+    };
+    let mut merged = existing.unwrap_or_else(|| {
+        serde_json::to_value(AppConfig::default()).expect("AppConfig serializes")
+    });
+
+    match (merged.as_object_mut(), payload.as_object()) {
+        (Some(merged_obj), Some(payload_obj)) => {
+            for (k, v) in payload_obj {
+                merged_obj.insert(k.clone(), v.clone());
+            }
+        }
+        _ => return Err(StatusCode::BAD_REQUEST),
+    }
+
+    // Validate the merged result still deserializes as AppConfig before
+    // committing it to disk — catches typos/bad types in the payload.
+    let validated: AppConfig =
+        serde_json::from_value(merged).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    if let Ok(content) = serde_json::to_string_pretty(&validated) {
         if std::fs::write(&path, content).is_ok() {
             info!("Successfully saved new configuration to {:?}", path);
             return Ok(StatusCode::OK);
