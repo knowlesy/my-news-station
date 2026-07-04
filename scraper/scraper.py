@@ -55,6 +55,8 @@ GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # Both are populated by load_config(), called from the entry points below.
 RSS_FEEDS: list[dict] = []
 MEDIUM_TAGS: list[str] = []
+SOURCES_SHORT: list[str] = []
+SOURCES_LONG: list[str] = []
 
 # Sources whose article pages hard-block automated fetches at the network
 # level (Akamai edge, in Daily Mail's case) regardless of browser fingerprint —
@@ -143,7 +145,7 @@ def load_config() -> None:
     first boot, so a missing file means the server has never run against this
     data directory — fail loudly rather than silently scraping nothing.
     """
-    global RSS_FEEDS, MEDIUM_TAGS, SYSTEM_PROMPT
+    global RSS_FEEDS, MEDIUM_TAGS, SYSTEM_PROMPT, SOURCES_SHORT, SOURCES_LONG
 
     cfg = load_json(CONFIG_PATH, None)
     if cfg is None:
@@ -157,6 +159,8 @@ def load_config() -> None:
         if (feed := _normalise_feed(item)) is not None
     ]
     MEDIUM_TAGS = list(cfg.get("medium_tags") or [])
+    SOURCES_SHORT = list(cfg.get("sources_short") or [])
+    SOURCES_LONG = list(cfg.get("sources_long") or [])
 
     # Drop silenced sources entirely — no scrape, no extraction, no EPUB
     silenced = set(cfg.get("silenced_sources") or [])
@@ -822,8 +826,27 @@ SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 def build_prompt(all_articles: list[dict]) -> str:
     """Assemble the single mega-prompt with the filtered article pool."""
-    short_sources_list = [s.strip().lower() for s in os.getenv("SHORT_SOURCES", "BBC News").split(",") if s.strip()]
-    long_sources_list = [s.strip().lower() for s in os.getenv("LONG_SOURCES", "BBC News,Medium/tags/terraform").split(",") if s.strip()]
+    # Precedence: explicit env override (manual trigger/regen) > config.json
+    # (Settings UI, used by the automated CronJob) > hardcoded default.
+    short_env = os.getenv("SHORT_SOURCES")
+    long_env = os.getenv("LONG_SOURCES")
+
+    if short_env:
+        short_sources = short_env.split(",")
+    elif SOURCES_SHORT:
+        short_sources = SOURCES_SHORT
+    else:
+        short_sources = ["BBC News"]
+
+    if long_env:
+        long_sources = long_env.split(",")
+    elif SOURCES_LONG:
+        long_sources = SOURCES_LONG
+    else:
+        long_sources = ["BBC News", "Medium/tags/terraform"]
+
+    short_sources_list = [s.strip().lower() for s in short_sources if s.strip()]
+    long_sources_list = [s.strip().lower() for s in long_sources if s.strip()]
 
     short_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in short_sources_list]
     long_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in long_sources_list]
@@ -846,9 +869,9 @@ def build_prompt(all_articles: list[dict]) -> str:
     return "\n\n".join([
         SYSTEM_PROMPT,
         f"── CRITICAL CONTENT FILTER RULES ──\n"
-        f"- For <short_radio>: You must ONLY cover the following curated stories (from {os.getenv('SHORT_SOURCES', 'BBC News')}):\n"
+        f"- For <short_radio>: You must ONLY cover the following curated stories (from {', '.join(short_sources)}):\n"
         f"{short_summary}\n\n"
-        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {os.getenv('LONG_SOURCES', 'BBC News,Medium/tags/terraform')}):\n"
+        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {', '.join(long_sources)}):\n"
         f"{long_summary}\n",
         f"── FULL DAILY POOL (FOR DETAILS) ──",
         "\n\n".join(pool_sections),
