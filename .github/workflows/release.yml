@@ -1,0 +1,32 @@
+name: Tag and release on commit
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create tag and release from commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          COUNT=$(git tag -l "v${DATE}-*" 2>/dev/null | wc -l)
+          SEQ=$((COUNT + 1))
+          TAG="v${DATE}-$(printf "%03d" $SEQ)"
+
+          MSG=$(git log -1 --pretty=%B)
+
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$MSG"
