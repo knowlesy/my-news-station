@@ -941,7 +941,10 @@ def build_prompt(
         "Do NOT produce any other output blocks, even if instructions above mention them."
     )
 
-    parts = [SYSTEM_PROMPT, filter_rules, output_contract]
+    parts = [SYSTEM_PROMPT]
+    if tracks:
+        parts.append(filter_rules)
+    parts.append(output_contract)
 
     if include_tldr:
         # Compact index of EVERY article in the pool (not just highlights) for
@@ -966,8 +969,9 @@ def build_prompt(
             "prose, no text outside this structure inside the block."
         )
 
-    parts.append("── FULL DAILY POOL (FOR DETAILS) ──")
-    parts.append("\n\n".join(pool_sections))
+    if tracks:
+        parts.append("── FULL DAILY POOL (FOR DETAILS) ──")
+        parts.append("\n\n".join(pool_sections))
 
     if include_tldr:
         parts.append("── TLDR INDEX (ALL ARTICLES, FOR <tldr_digest> ONLY) ──")
@@ -1319,6 +1323,30 @@ async def generate_tts(text: str, output_path: Path, voice: str) -> None:
 # MAIN PIPELINE
 # ═══════════════════════════════════════════════════════════════════
 
+def merge_todays_articles(all_articles: list[dict], date_str: str) -> list[dict]:
+    """
+    Merge already-extracted articles from today's sidecar into the pool,
+    deduped by URL, earlier articles first (chronological order).
+
+    This is what makes same-day re-runs a "diff against yesterday": the
+    scrape itself only fetches URLs the registry hasn't seen (cheap), and
+    this puts the morning's articles back into the new edition.
+    """
+    sidecar_path = DATA_DIR / f"articles-{date_str[:8]}.json"
+    prior = load_json(sidecar_path, [])
+    if not prior:
+        return all_articles
+    seen = {a.get("url") for a in all_articles if a.get("url")}
+    merged = [a for a in prior if a.get("url") and a["url"] not in seen]
+    if merged:
+        log.info(
+            "Merged %d article(s) from earlier run(s) today into the pool "
+            "(%d fresh + %d prior)",
+            len(merged), len(all_articles), len(merged),
+        )
+    return merged + all_articles
+
+
 async def run_pipeline() -> None:
     load_config()
     date_str = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1390,6 +1418,14 @@ async def run_pipeline() -> None:
             all_articles = [a for a in all_articles if not a.get("is_paywalled", False)]
             if paywalled_count > 0:
                 log.info("Skipped %d paywalled/truncated posts", paywalled_count)
+
+    # ── Phase 1b: Merge earlier runs from today ──────────────────
+    # The URL registry filters out everything ever scraped, so a same-day
+    # re-run would otherwise produce an edition containing only the delta
+    # since the LAST run (e.g. 2pm edition missing the 6am articles).
+    # Merging today's sidecar back in makes every edition a diff against
+    # yesterday instead — full day's coverage, nothing re-fetched.
+    all_articles = merge_todays_articles(all_articles, date_str)
 
     # ── Phase 2: Curate ──────────────────────────────────────────
     all_articles = curate_audio_highlights(all_articles)
@@ -1541,14 +1577,34 @@ async def run_regen_audio(date_str: str) -> None:
 
     log.info("Loaded %d articles for regen", len(all_articles))
 
+    # REGEN_TRACK picks what to regenerate:
+    #   radio | podcast → that audio track only (one script, other MP3 untouched)
+    #   epub            → rebuild the daily EPUB from saved articles (NO LLM call)
+    #   tldr            → re-summarize the TLDR digest only (one cheap LLM call)
+    #   unset           → legacy full regen: both tracks + refreshed TLDR
+    regen_track = os.getenv("REGEN_TRACK", "").strip().lower()
+
+    if regen_track == "epub":
+        build_epub(all_articles, date_str)
+        log.info("══════════════════════════════════════════════════")
+        log.info("  EPUB rebuild complete — %s (no LLM call needed)", date_str)
+        log.info("══════════════════════════════════════════════════")
+        return
+
+    if regen_track == "tldr":
+        log.info("TLDR-only regen: building digest prompt and calling LLM…")
+        prompt = build_prompt(all_articles, tracks=(), include_tldr=True)
+        llm_response = call_llm(prompt)
+        log.info("LLM response received (%d chars)", len(llm_response))
+        build_tldr_epub(extract_xml_block(llm_response, "tldr_digest"), date_str)
+        log.info("══════════════════════════════════════════════════")
+        log.info("  TLDR digest regen complete — %s", date_str)
+        log.info("══════════════════════════════════════════════════")
+        return
+
     # Re-apply highlight curation (voice/sources may have changed)
     all_articles = curate_audio_highlights(all_articles)
 
-    # REGEN_TRACK=radio|podcast limits the regen to one track — the prompt
-    # only requests that script (and only feeds its articles), the LLM only
-    # writes that script, and the other track's MP3 is left untouched.
-    # Unset = legacy full regen: both tracks + a refreshed TLDR digest.
-    regen_track = os.getenv("REGEN_TRACK", "").strip().lower()
     if regen_track in ("radio", "podcast"):
         tracks: tuple[str, ...] = (regen_track,)
         include_tldr = False

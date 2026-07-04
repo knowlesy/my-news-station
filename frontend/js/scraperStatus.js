@@ -183,13 +183,20 @@ async function triggerRegenAudio(dateStr, type) {
     btn.innerHTML = '⏳ Regenerating…';
   }
 
+  const isBookTarget = type === 'epub' || type === 'tldr';
+  const restoreLabel = isBookTarget ? '🔁 Rebuild' : '🔁 Re-generate';
+  const runningMsg =
+    type === 'epub' ? 'Rebuilding EPUB from saved articles — no AI call…'
+    : type === 'tldr' ? 'Re-summarizing TLDR digest — LLM running…'
+    : 'Re-generating audio — LLM + TTS running…';
+
   const shortSources = getSelectedSources('short');
   const longSources = getSelectedSources('long');
 
   const qParams = new URLSearchParams({ date: dateStr });
-  // Only regenerate the clicked card's track — the backend leaves the
-  // other track's MP3 untouched and the LLM only writes one script.
-  if (type === 'radio' || type === 'podcast') qParams.set('track', type);
+  // Only regenerate the clicked target — audio tracks leave the other MP3
+  // untouched; epub rebuilds without any LLM call; tldr re-summarizes only.
+  if (['radio', 'podcast', 'epub', 'tldr'].includes(type)) qParams.set('track', type);
   qParams.set('voice_short', $('voiceShortSelect').value);
   qParams.set('voice_long', $('voiceLongSelect').value);
   if (shortSources.length) qParams.set('short_sources', shortSources.join(','));
@@ -199,19 +206,19 @@ async function triggerRegenAudio(dateStr, type) {
     const resp = await fetch(`/api/scrape/regen-audio?${qParams.toString()}`, { method: 'POST' });
     if (resp.status === 409) {
       toast('A scraper job is already running.', 'error');
-      if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = restoreLabel; }
       return;
     }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
     // Immediately show the same running UI as a full scrape
-    showRunningUi('Re-generating audio — LLM + TTS running...');
+    showRunningUi(runningMsg);
     expandConsole();
-    toast('Re-generating audio — LLM + TTS running, no full re-scrape.', 'success');
+    toast(runningMsg, 'success');
     await refreshLogs();
   } catch (err) {
-    toast(`Failed to start audio regen: ${err.message}`, 'error');
-    if (btn) { btn.disabled = false; btn.innerHTML = '🔁 Re-generate'; }
+    toast(`Failed to start regen: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = restoreLabel; }
   }
 }
 

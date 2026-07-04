@@ -131,6 +131,21 @@ export function selectDate(dateStr) {
   renderAudioPlayer('podcast', entry.podcast, dateStr, entry);
   loadEpub(entry.epub, dateStr);
   loadTldrEpub(entry.tldr, dateStr);
+
+  // Rebuild buttons need the saved articles sidecar (or EPUB fallback) on
+  // the server, so gate both on this edition having a book. TLDR shows
+  // even when entry.tldr is missing — that's the backfill path.
+  const epubRegenBtn = $('regenBtn-epub');
+  if (epubRegenBtn) {
+    epubRegenBtn.style.display = entry.epub ? '' : 'none';
+    epubRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'epub');
+  }
+  const tldrRegenBtn = $('regenBtn-tldr');
+  if (tldrRegenBtn) {
+    tldrRegenBtn.style.display = entry.epub ? '' : 'none';
+    tldrRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'tldr');
+  }
+
   refreshSendButtonForDate();
 }
 

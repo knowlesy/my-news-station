@@ -1011,6 +1011,7 @@
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button id="regenBtn-epub" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" title="Rebuild this EPUB from saved articles — no AI call" aria-label="Rebuild EPUB">🔁 Rebuild</button>
           <button id="sendToX4Btn" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" aria-label="Send EPUB to Crosspoint X4">📤 Send to X4</button>
           <div class="epub-nav-controls" role="navigation" aria-label="Chapter navigation">
             <button id="prevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous chapter">‹</button>
@@ -1056,10 +1057,13 @@
             <div class="epub-subtitle" id="tldrSubtitle">One-sentence summaries of every story</div>
           </div>
         </div>
-        <div class="epub-nav-controls" role="navigation" aria-label="TLDR chapter navigation">
-          <button id="tldrPrevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous TLDR chapter">‹</button>
-          <span   class="chapter-indicator" id="tldrChapterIndicator" aria-live="polite">—</span>
-          <button id="tldrNextChapter" class="btn btn-nav" disabled title="Next chapter" aria-label="Next TLDR chapter">›</button>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button id="regenBtn-tldr" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" title="Re-summarize the TLDR digest — one AI call, audio untouched" aria-label="Rebuild TLDR digest">🔁 Rebuild</button>
+          <div class="epub-nav-controls" role="navigation" aria-label="TLDR chapter navigation">
+            <button id="tldrPrevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous TLDR chapter">‹</button>
+            <span   class="chapter-indicator" id="tldrChapterIndicator" aria-live="polite">—</span>
+            <button id="tldrNextChapter" class="btn btn-nav" disabled title="Next chapter" aria-label="Next TLDR chapter">›</button>
+          </div>
         </div>
       </div>
 
