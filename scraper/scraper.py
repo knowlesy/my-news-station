@@ -67,6 +67,7 @@ NO_BROWSER_FETCH_SOURCES = {"Daily Mail"}
 TOP_N                = 10     # Max articles per source
 SIMILARITY_THRESHOLD = 0.6    # TF-IDF cosine sim → "High-Impact Highlight"
 TOP_MEDIUM_AUDIO     = 3      # Top Medium posts forced into audio track
+TOP_SOURCE_AUDIO     = 3      # Top posts per configured short/long source forced into audio track
 EXTRACT_CONCURRENCY  = int(os.getenv("EXTRACT_CONCURRENCY", "6"))  # Max simultaneous browser pages
 FEED_TIMEOUT_SECS    = 15     # Per-feed HTTP timeout for RSS fetches
 
@@ -734,6 +735,33 @@ async def extract_article_content(context, article: dict) -> dict:
 # AUDIO CURATION — TF-IDF CLUSTERING
 # ═══════════════════════════════════════════════════════════════════
 
+def resolve_configured_sources() -> tuple[list[str], list[str]]:
+    """
+    Resolve the short_radio / long_podcast source whitelists.
+
+    Precedence: explicit env override (manual trigger/regen) > config.json
+    (Settings UI, used by the automated CronJob) > hardcoded default.
+    """
+    short_env = os.getenv("SHORT_SOURCES")
+    long_env = os.getenv("LONG_SOURCES")
+
+    if short_env:
+        short_sources = short_env.split(",")
+    elif SOURCES_SHORT:
+        short_sources = SOURCES_SHORT
+    else:
+        short_sources = ["BBC News"]
+
+    if long_env:
+        long_sources = long_env.split(",")
+    elif SOURCES_LONG:
+        long_sources = SOURCES_LONG
+    else:
+        long_sources = ["BBC News", "Medium/tags/terraform"]
+
+    return short_sources, long_sources
+
+
 def curate_audio_highlights(all_articles: list[dict]) -> list[dict]:
     """
     Pass 1 — Breaking-news cluster detection:
@@ -781,6 +809,20 @@ def curate_audio_highlights(all_articles: list[dict]) -> list[dict]:
             a["audio_highlight"] = True
             log.info("  [MEDIUM PICK] %s", a["title"][:80])
 
+    # Pass 2b: guarantee a floor of highlights for each source configured for
+    # short_radio/long_podcast — Pass 1 only catches stories that overlap
+    # across sources, so a source with no cross-source overlap today (e.g.
+    # BBC News on a quiet news day) would otherwise never get any highlight
+    # at all, leaving that track with nothing to talk about.
+    configured_short, configured_long = resolve_configured_sources()
+    configured_sources = {s.strip().lower() for s in configured_short + configured_long if s.strip()}
+    for source_name in configured_sources:
+        source_articles = [a for a in all_articles if a.get("source", "").lower() == source_name]
+        for a in source_articles[:TOP_SOURCE_AUDIO]:
+            if not a["audio_highlight"]:
+                a["audio_highlight"] = True
+                log.info("  [SOURCE PICK] %s (%s)", a["title"][:80], a.get("source"))
+
     # Pass 3: Enforce limit of at most 4 highlights per news provider (chronological priority)
     MAX_HIGHLIGHTS_PER_SOURCE = 4
     source_counts = {}
@@ -826,25 +868,7 @@ SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 def build_prompt(all_articles: list[dict]) -> str:
     """Assemble the single mega-prompt with the filtered article pool."""
-    # Precedence: explicit env override (manual trigger/regen) > config.json
-    # (Settings UI, used by the automated CronJob) > hardcoded default.
-    short_env = os.getenv("SHORT_SOURCES")
-    long_env = os.getenv("LONG_SOURCES")
-
-    if short_env:
-        short_sources = short_env.split(",")
-    elif SOURCES_SHORT:
-        short_sources = SOURCES_SHORT
-    else:
-        short_sources = ["BBC News"]
-
-    if long_env:
-        long_sources = long_env.split(",")
-    elif SOURCES_LONG:
-        long_sources = SOURCES_LONG
-    else:
-        long_sources = ["BBC News", "Medium/tags/terraform"]
-
+    short_sources, long_sources = resolve_configured_sources()
     short_sources_list = [s.strip().lower() for s in short_sources if s.strip()]
     long_sources_list = [s.strip().lower() for s in long_sources if s.strip()]
 
