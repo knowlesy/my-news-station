@@ -248,10 +248,16 @@ async fn handle_get_config(
 ) -> Json<AppConfig> {
     let path = state.data_dir.join("config.json");
     if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
-                return Json(config);
-            }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                Ok(config) => return Json(config),
+                Err(e) => warn!(
+                    "config.json is corrupt — serving defaults (file NOT overwritten; \
+                     a Save from the UI will replace it): {}",
+                    e
+                ),
+            },
+            Err(e) => warn!("Cannot read config.json — serving defaults: {}", e),
         }
     }
     Json(AppConfig::default())

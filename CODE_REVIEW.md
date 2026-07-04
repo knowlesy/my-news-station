@@ -4,8 +4,8 @@ Full-repo review covering `scraper/scraper.py` (1,263 lines), `server/src/main.r
 `frontend/index.html` (2,403 lines), Dockerfile, and k8s manifests.
 Items are ordered by severity. Every fix here retains existing functionality.
 
-> **Status (2026-07-04):** All five P0 items are **fixed and verified** (details inline).
-> P1–P3 remain open.
+> **Status (2026-07-04):** All five P0 items and all five P1 items are **fixed and verified**
+> (details inline). P2–P3 remain open.
 
 ---
 
@@ -65,35 +65,50 @@ implementation at line 560 shadows the broken one. Harmless today, a landmine fo
 
 ## P1 — Robustness & resource risks
 
-### 6. Unbounded browser concurrency (OOM risk in k8s)
+### 6. ✅ FIXED — Unbounded browser concurrency (OOM risk in k8s)
 `scraper.py:1052` fires `asyncio.gather` over **every** article at once — 16 sources × 10
 articles ≈ 160 concurrent Chromium pages. The k8s CronJob has a 3Gi memory limit; this can OOM
 the pod or trip site rate-limits.
 **Fix:** wrap `extract_article_content` in an `asyncio.Semaphore(6)` (or similar). ~4 lines.
+**Applied:** extraction now runs through an `asyncio.Semaphore`, capped at 6 concurrent pages by
+default and tunable via the `EXTRACT_CONCURRENCY` env var.
 
-### 7. Unescaped HTML interpolation in EPUB chapters
+### 7. ✅ FIXED — Unescaped HTML interpolation in EPUB chapters
 `build_epub` (`scraper.py:925–955`) injects `chapter_title`, `author_name`, `source`, and
 `article_url` raw into XHTML. An article title containing `&`, `<`, or a stray quote produces
 invalid XHTML — epub.js renders a blank chapter and ebooklib may choke on round-trip
 (`extract_articles_from_epub`). The body is escaped via `format_text_to_html`; the metadata isn't.
 **Fix:** `html.escape()` title/author/source, and attribute-quote the URL.
+**Applied:** title, author, source, article URL, and image URLs are all `html.escape()`d before
+interpolation. Verified by building an EPUB with `&`/`<`/quote-laden metadata and round-tripping
+it through `extract_articles_from_epub` — the title survives exactly.
 
-### 8. No feed timeout — one dead RSS feed stalls the whole run
+### 8. ✅ FIXED — No feed timeout — one dead RSS feed stalls the whole run
 `feedparser.parse(url)` (`scraper.py:356`) has no timeout and runs serially per feed. A
 blackholed feed hangs until the CronJob's 90-minute deadline kills everything.
 **Fix:** fetch with `requests.get(url, timeout=15)` and pass the body to `feedparser.parse()`.
+**Applied:** feeds are fetched via `requests` with a 15s timeout (`FEED_TIMEOUT_SECS`) and the
+project User-Agent, then parsed from the response body; fetch failures log a warning and return
+an empty list. Verified live: a healthy feed returns articles, a blackholed IP returns `[]` after
+exactly 15s instead of hanging.
 
-### 9. Scraped-URL registry truncation drops random entries
+### 9. ✅ FIXED — Scraped-URL registry truncation drops random entries
 `scraper.py:1116–1118`: `list(set)[-2000:]` — sets are unordered, so the 2000 "kept" URLs are
 arbitrary, not the newest. Old articles can be re-scraped and duplicated on subsequent runs.
 **Fix:** keep a list (insertion-ordered), dedupe with a set membership check, then truncate.
+**Applied:** the registry is now an insertion-ordered list (oldest first) with set-based dedupe;
+truncation keeps the newest 2000.
 
-### 10. Config parse errors silently revert to defaults
+### 10. ✅ FIXED — Config parse errors silently revert to defaults
 `handle_get_config` (`main.rs:246`) returns `AppConfig::default()` on *any* read/parse failure
 with no log line. A corrupted `config.json` silently resurrects the default source list and wipes
 the user's devices/prompt from the UI (and a subsequent Save persists that reset).
 **Fix:** log a `warn!` on parse failure at minimum; ideally return 500 so the UI shows an error
 instead of quietly re-serving defaults.
+**Applied:** read and parse failures now log distinct `warn!` lines (noting the file is not
+overwritten). Kept the defaults fallback rather than a 500 so the dashboard stays usable.
+Residual risk (documented): a user hitting Save while defaults are being served will persist the
+reset — acceptable until item 14 consolidates config handling.
 
 ---
 
@@ -214,7 +229,7 @@ firmware on your network"), or the probe result will just permanently read offli
 ## Suggested order of attack
 
 1. ~~**P0 items 1–5**~~ — ✅ done (2026-07-04).
-2. **Items 6–9** — robustness for the nightly run (semaphore, feed timeout, escaping, registry).
+2. ~~**Items 6–9**~~ — ✅ done (2026-07-04, including item 10).
 3. **Item 11 + 18–19** — mechanical dedup in Rust and Python.
 4. **Items 12–14** — config ownership consolidation (one sitting, touches all three components).
 5. **Item 15** — frontend modularization, ideally *before* the next UI feature.

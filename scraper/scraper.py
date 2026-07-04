@@ -900,6 +900,8 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
     Convert the scraped articles list into a structured EPUB 3 file directly.
     Each article becomes a separate chapter in the table of contents.
     """
+    from html import escape as _esc
+
     book = epub.EpubBook()
     book.set_identifier(f"daily-news-{date_str}")
     book.set_title(f"Daily News — {datetime.strptime(date_str[:8], '%Y%m%d').strftime('%d %B %Y')}")
@@ -943,16 +945,19 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
                 chapter_body = article.get("summary", "(No content available)")
 
             body_html = format_text_to_html(chapter_body)
-            
+
+            # Escape everything interpolated into the XHTML — a title or author
+            # containing & or < would otherwise produce an invalid chapter
+            safe_title = _esc(chapter_title)
             author_name = article.get("author", "").strip()
-            author_suffix = f" · By {author_name}" if author_name else ""
+            author_suffix = f" · By {_esc(author_name)}" if author_name else ""
             article_url = article.get("url", "")
-            url_link = f' · <a href="{article_url}">Original Article</a>' if article_url else ""
-            source_tag = f'<div class="source-tag">Source: {source}{author_suffix}{url_link}</div>'
+            url_link = f' · <a href="{_esc(article_url)}">Original Article</a>' if article_url else ""
+            source_tag = f'<div class="source-tag">Source: {_esc(source)}{author_suffix}{url_link}</div>'
 
             image_html = ""
             for img_url in article.get("images", []):
-                image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{img_url}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
+                image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{_esc(img_url)}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
 
             chapter = epub.EpubHtml(
                 title=chapter_title,
@@ -962,12 +967,12 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
             chapter.set_content(
                 f'<html>'
                 f'<head>'
-                f'  <title>{chapter_title}</title>'
+                f'  <title>{safe_title}</title>'
                 f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
                 f'</head>'
                 f'<body>'
                 f'  {source_tag}'
-                f'  <h2>{chapter_title}</h2>'
+                f'  <h2>{safe_title}</h2>'
                 f'  {image_html}'
                 f'  {body_html}'
                 f'</body>'
@@ -1137,16 +1142,22 @@ async def run_pipeline() -> None:
         try:
             import json
             scraped_urls_path = DATA_DIR / "scraped_urls.json"
-            current_scraped = set()
+            # Keep the registry as an ordered list (oldest first) so that
+            # truncation drops the OLDEST entries — a set would make the
+            # kept 2000 arbitrary and could re-scrape old articles.
+            scraped_list = []
             if scraped_urls_path.exists():
                 with open(scraped_urls_path, "r", encoding="utf-8") as f:
-                    current_scraped = set(json.load(f))
-            
-            current_scraped.update(new_urls)
-            scraped_list = list(current_scraped)
+                    scraped_list = json.load(f)
+
+            seen = set(scraped_list)
+            for u in new_urls:
+                if u not in seen:
+                    scraped_list.append(u)
+                    seen.add(u)
             if len(scraped_list) > 2000:
                 scraped_list = scraped_list[-2000:]
-                
+
             with open(scraped_urls_path, "w", encoding="utf-8") as f:
                 json.dump(scraped_list, f, indent=2)
             log.info("Saved %d total scraped URLs to registry", len(scraped_list))
