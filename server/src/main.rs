@@ -634,6 +634,9 @@ async fn handle_scrape_trigger(
 #[derive(Deserialize)]
 struct RegenAudioParams {
     date: Option<String>,
+    /// "radio" or "podcast" — regenerate only that track (saves LLM tokens
+    /// and leaves the other track's MP3 untouched). Absent = both + TLDR.
+    track: Option<String>,
     voice_short: Option<String>,
     voice_long: Option<String>,
     short_sources: Option<String>,
@@ -652,6 +655,11 @@ async fn handle_regen_audio(
     }
 
     let mut envs: Vec<(&'static str, String)> = vec![("REGEN_DATE", date_str)];
+    if let Some(t) = params.track {
+        if t == "radio" || t == "podcast" {
+            envs.push(("REGEN_TRACK", t));
+        }
+    }
     if let Some(vs) = params.voice_short { envs.push(("VOICE_SHORT", vs)); }
     if let Some(vl) = params.voice_long { envs.push(("VOICE_LONG", vl)); }
     if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }

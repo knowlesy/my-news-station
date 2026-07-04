@@ -866,11 +866,26 @@ TONE RULES (apply to both outputs):
 SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
-def build_prompt(all_articles: list[dict]) -> str:
-    """Assemble the single mega-prompt with the filtered article pool."""
+def build_prompt(
+    all_articles: list[dict],
+    tracks: tuple[str, ...] = ("radio", "podcast"),
+    include_tldr: bool = True,
+) -> str:
+    """
+    Assemble the single mega-prompt with the filtered article pool.
+
+    `tracks` limits which audio scripts the LLM is asked to write — a
+    single-track regen only pays input tokens for that track's articles
+    and output tokens for that one script. SYSTEM_PROMPT (including any
+    custom personality) is always included, so per-track regens still
+    pick up saved personality changes.
+    """
     short_sources, long_sources = resolve_configured_sources()
     short_sources_list = [s.strip().lower() for s in short_sources if s.strip()]
     long_sources_list = [s.strip().lower() for s in long_sources if s.strip()]
+
+    want_radio = "radio" in tracks
+    want_podcast = "podcast" in tracks
 
     short_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in short_sources_list]
     long_highlights = [a for a in all_articles if a.get("audio_highlight") and a.get("source", "").lower() in long_sources_list]
@@ -878,10 +893,31 @@ def build_prompt(all_articles: list[dict]) -> str:
     short_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in short_highlights) or "  (none flagged)"
     long_summary = "\n".join(f"  • [{a['source']}] {a['title']}" for a in long_highlights) or "  (none flagged)"
 
-    # Only pass articles to the LLM that are actually flagged as highlights to prevent leakage
+    filter_rules = "── CRITICAL CONTENT FILTER RULES ──\n"
+    if want_radio:
+        filter_rules += (
+            f"- For <short_radio>: You must ONLY cover the following curated stories (from {', '.join(short_sources)}):\n"
+            f"{short_summary}\n\n"
+        )
+    if want_podcast:
+        filter_rules += (
+            f"- For <long_podcast>: You must ONLY cover the following curated stories (from {', '.join(long_sources)}):\n"
+            f"{long_summary}\n"
+        )
+
+    # Only pass articles to the LLM that are actually flagged as highlights
+    # to prevent leakage — and only those needed by the requested tracks,
+    # so a radio-only regen doesn't pay input tokens for podcast articles.
+    def _wanted(a: dict) -> bool:
+        if not a.get("audio_highlight"):
+            return False
+        src = a.get("source", "").lower()
+        return (want_radio and src in short_sources_list) or (
+            want_podcast and src in long_sources_list
+        )
+
     pool_sections = []
-    highlight_articles = [a for a in all_articles if a.get("audio_highlight")]
-    for i, a in enumerate(highlight_articles, 1):
+    for i, a in enumerate((a for a in all_articles if _wanted(a)), 1):
         pool_sections.append(
             f"=== ARTICLE {i} ===\n"
             f"Source:  {a['source']}\n"
@@ -890,37 +926,54 @@ def build_prompt(all_articles: list[dict]) -> str:
             f"{a.get('content') or a.get('summary', '(no content)')}\n"
         )
 
-    # Compact index of EVERY article in the pool (not just highlights) for the
-    # TLDR digest — trimmed hard so 30+ articles don't blow up the prompt.
-    tldr_index = []
-    for a in all_articles:
-        snippet = (a.get("content") or a.get("summary") or "").strip()[:400]
-        tldr_index.append(f"[{a['source']}] {a['title']}\n{snippet}")
+    # Explicit output contract — overrides the SYSTEM_PROMPT's mention of
+    # both scripts when only one track is being regenerated.
+    expected_blocks = []
+    if want_radio:
+        expected_blocks.append("<short_radio>")
+    if want_podcast:
+        expected_blocks.append("<long_podcast>")
+    if include_tldr:
+        expected_blocks.append("<tldr_digest>")
+    output_contract = (
+        "── OUTPUT CONTRACT ──\n"
+        f"Produce ONLY the following output block(s): {', '.join(expected_blocks)}. "
+        "Do NOT produce any other output blocks, even if instructions above mention them."
+    )
 
-    return "\n\n".join([
-        SYSTEM_PROMPT,
-        f"── CRITICAL CONTENT FILTER RULES ──\n"
-        f"- For <short_radio>: You must ONLY cover the following curated stories (from {', '.join(short_sources)}):\n"
-        f"{short_summary}\n\n"
-        f"- For <long_podcast>: You must ONLY cover the following curated stories (from {', '.join(long_sources)}):\n"
-        f"{long_summary}\n",
-        "── THIRD OUTPUT: <tldr_digest> ──\n"
-        "In addition to the two audio scripts, produce a <tldr_digest> block covering EVERY "
-        "article listed in the TLDR INDEX below (this index is ONLY for the digest — do not "
-        "let it influence <short_radio> or <long_podcast>). For each article write ONE plain, "
-        "jargon-free sentence (two at most) saying what happened and why it matters. No wit "
-        "needed here — pure clarity.\n"
-        "STRICT FORMAT (it is parsed by a machine):\n"
-        "[[Source Name]]\n"
-        "- Article Title :: the one-sentence summary\n"
-        "- Next Article Title :: its summary\n"
-        "Repeat a [[Source Name]] line for each source group. No markdown, no other prose, "
-        "no text outside this structure inside the block.",
-        f"── FULL DAILY POOL (FOR DETAILS) ──",
-        "\n\n".join(pool_sections),
-        f"── TLDR INDEX (ALL ARTICLES, FOR <tldr_digest> ONLY) ──",
-        "\n\n".join(tldr_index),
-    ])
+    parts = [SYSTEM_PROMPT, filter_rules, output_contract]
+
+    if include_tldr:
+        # Compact index of EVERY article in the pool (not just highlights) for
+        # the TLDR digest — trimmed hard so 30+ articles don't blow up the prompt.
+        tldr_index = []
+        for a in all_articles:
+            snippet = (a.get("content") or a.get("summary") or "").strip()[:400]
+            tldr_index.append(f"[{a['source']}] {a['title']}\n{snippet}")
+
+        parts.append(
+            "── OUTPUT: <tldr_digest> ──\n"
+            "Also produce a <tldr_digest> block covering EVERY article listed in the "
+            "TLDR INDEX below (this index is ONLY for the digest — do not let it "
+            "influence the audio scripts). For each article write ONE plain, "
+            "jargon-free sentence (two at most) saying what happened and why it matters. "
+            "No wit needed here — pure clarity.\n"
+            "STRICT FORMAT (it is parsed by a machine):\n"
+            "[[Source Name]]\n"
+            "- Article Title :: the one-sentence summary\n"
+            "- Next Article Title :: its summary\n"
+            "Repeat a [[Source Name]] line for each source group. No markdown, no other "
+            "prose, no text outside this structure inside the block."
+        )
+
+    parts.append("── FULL DAILY POOL (FOR DETAILS) ──")
+    parts.append("\n\n".join(pool_sections))
+
+    if include_tldr:
+        parts.append("── TLDR INDEX (ALL ARTICLES, FOR <tldr_digest> ONLY) ──")
+        parts.append("\n\n".join(tldr_index))
+
+    return "\n\n".join(parts)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1491,34 +1544,51 @@ async def run_regen_audio(date_str: str) -> None:
     # Re-apply highlight curation (voice/sources may have changed)
     all_articles = curate_audio_highlights(all_articles)
 
+    # REGEN_TRACK=radio|podcast limits the regen to one track — the prompt
+    # only requests that script (and only feeds its articles), the LLM only
+    # writes that script, and the other track's MP3 is left untouched.
+    # Unset = legacy full regen: both tracks + a refreshed TLDR digest.
+    regen_track = os.getenv("REGEN_TRACK", "").strip().lower()
+    if regen_track in ("radio", "podcast"):
+        tracks: tuple[str, ...] = (regen_track,)
+        include_tldr = False
+        log.info("Single-track regen requested: %s only", regen_track)
+    else:
+        tracks = ("radio", "podcast")
+        include_tldr = True
+
     log.info("Building prompt and calling LLM…")
-    prompt = build_prompt(all_articles)
+    prompt = build_prompt(all_articles, tracks=tracks, include_tldr=include_tldr)
     llm_response = call_llm(prompt)
     log.info("LLM response received (%d chars)", len(llm_response))
 
-    short_radio  = extract_xml_block(llm_response, "short_radio")
-    long_podcast = extract_xml_block(llm_response, "long_podcast")
-    tldr_digest  = extract_xml_block(llm_response, "tldr_digest")
-
-    # Regen re-calls the LLM anyway, so refresh the TLDR digest too
-    # (overwrites the existing daily-tldr file for this date key)
-    build_tldr_epub(tldr_digest, date_str)
+    if include_tldr:
+        # Full regen re-calls the LLM anyway, so refresh the TLDR digest too
+        # (overwrites the existing daily-tldr file for this date key)
+        build_tldr_epub(extract_xml_block(llm_response, "tldr_digest"), date_str)
 
     # Name the MP3s with the full group key passed by the frontend (usually
     # YYYYMMDD-HHMMSS, matching the EPUB's timestamp). The server groups media
     # by this exact key, so the new audio joins the same playlist entry instead
     # of appearing as a separate date — and overwrites pipeline audio in place.
-    radio_path   = DATA_DIR / f"short-radio-{date_str}.mp3"
-    podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
+    tts_jobs = []
+    files_written = []
+    if "radio" in tracks:
+        radio_path = DATA_DIR / f"short-radio-{date_str}.mp3"
+        tts_jobs.append(generate_tts(
+            extract_xml_block(llm_response, "short_radio"), radio_path, VOICE_SHORT))
+        files_written.append(radio_path.name)
+    if "podcast" in tracks:
+        podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
+        tts_jobs.append(generate_tts(
+            extract_xml_block(llm_response, "long_podcast"), podcast_path, VOICE_LONG))
+        files_written.append(podcast_path.name)
 
-    await asyncio.gather(
-        generate_tts(short_radio,  radio_path,   VOICE_SHORT),
-        generate_tts(long_podcast, podcast_path, VOICE_LONG),
-    )
+    await asyncio.gather(*tts_jobs)
 
     log.info("══════════════════════════════════════════════════")
-    log.info("  Audio regen complete — %s (files: %s, %s)",
-             date_str, radio_path.name, podcast_path.name)
+    log.info("  Audio regen complete — %s (files: %s)",
+             date_str, ", ".join(files_written))
     log.info("══════════════════════════════════════════════════")
 
 

@@ -187,6 +187,9 @@ async function triggerRegenAudio(dateStr, type) {
   const longSources = getSelectedSources('long');
 
   const qParams = new URLSearchParams({ date: dateStr });
+  // Only regenerate the clicked card's track — the backend leaves the
+  // other track's MP3 untouched and the LLM only writes one script.
+  if (type === 'radio' || type === 'podcast') qParams.set('track', type);
   qParams.set('voice_short', $('voiceShortSelect').value);
   qParams.set('voice_long', $('voiceLongSelect').value);
   if (shortSources.length) qParams.set('short_sources', shortSources.join(','));
