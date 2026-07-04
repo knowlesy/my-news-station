@@ -98,9 +98,17 @@ struct AppConfig {
     sources_long: Vec<String>,
     #[serde(default = "default_skip_paywalled")]
     skip_paywalled_posts: bool,
+    /// Serve the /opds catalog (Settings toggle). Default on — it's the
+    /// pull path for e-readers; disable if you don't want it exposed.
+    #[serde(default = "default_opds_enabled")]
+    opds_enabled: bool,
 }
 
 fn default_skip_paywalled() -> bool {
+    true
+}
+
+fn default_opds_enabled() -> bool {
     true
 }
 
@@ -187,6 +195,7 @@ impl Default for AppConfig {
             sources_short: Vec::new(),
             sources_long: Vec::new(),
             skip_paywalled_posts: true,
+            opds_enabled: true,
         }
     }
 }
@@ -311,7 +320,19 @@ fn xml_escape(s: &str) -> String {
 ///
 /// No auth for now — the station lives on a trusted home network. If that
 /// ever changes, wrap this route and /media in basic-auth middleware.
-async fn handle_opds(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    // Honour the Settings toggle — read fresh each request so flipping it
+    // takes effect immediately, no restart needed.
+    let config_path = state.data_dir.join("config.json");
+    let enabled = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
+        .map(|c| c.opds_enabled)
+        .unwrap_or(true);
+    if !enabled {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
     // (filename, modified) for every epub in the data dir
     let mut books: Vec<(String, DateTime<Utc>)> = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(&*state.data_dir) {
@@ -379,13 +400,13 @@ async fn handle_opds(State(state): State<AppState>) -> impl IntoResponse {
 "#
     );
 
-    (
+    Ok((
         [(
             axum::http::header::CONTENT_TYPE,
             "application/atom+xml;profile=opds-catalog;kind=acquisition",
         )],
         feed,
-    )
+    ))
 }
 
 /// `GET /api/config` — read the current sources configuration from config.json or return defaults.

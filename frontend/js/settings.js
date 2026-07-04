@@ -339,6 +339,8 @@ function toggleOptionsModal() {
     $('rssFeedsInput').value = feedsUrls;
     $('mediumTagsInput').value = currentConfig.medium_tags.join(', ');
     $('systemPromptInput').value = currentConfig.system_prompt || '';
+    $('opdsEnabledCheckbox').checked = currentConfig.opds_enabled !== false;
+    $('opdsUrlDisplay').textContent = `${window.location.origin}/opds`;
     renderSourceHealth();
     syncFromConfig(currentConfig);
     renderCrosspointDevices();
@@ -408,6 +410,7 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       medium_tags: medium_tags,
       silenced_sources: silenced_sources,
       system_prompt: system_prompt,
+      opds_enabled: $('opdsEnabledCheckbox').checked,
       ...getDeviceSaveState(),
     });
 
