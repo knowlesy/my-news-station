@@ -10,9 +10,9 @@
 //! ╚══════════════════════════════════════════════════════════════════╝
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -66,11 +66,23 @@ struct RssFeed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct CrosspointDevice {
+    name: String,
+    ip: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
     rss_feeds: Vec<RssFeed>,
     medium_tags: Vec<String>,
     #[serde(default)]
     silenced_sources: Vec<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    crosspoint_devices: Vec<CrosspointDevice>,
+    #[serde(default)]
+    default_crosspoint_ip: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -144,6 +156,9 @@ impl Default for AppConfig {
             ],
             medium_tags: vec!["terraform".to_string()],
             silenced_sources: Vec::new(),
+            system_prompt: None,
+            crosspoint_devices: Vec::new(),
+            default_crosspoint_ip: None,
         }
     }
 }
@@ -296,8 +311,6 @@ async fn handle_scrape_logs(
     let logs = state.scraper_logs.lock().await;
     Json(logs.iter().cloned().collect())
 }
-
-use axum::extract::Query;
 
 #[derive(Deserialize)]
 struct TriggerParams {
@@ -544,7 +557,6 @@ async fn handle_regen_audio(
     }))
 }
 
-use axum::response::IntoResponse;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 static PREVIEW_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -638,6 +650,192 @@ async fn handle_tts_preview(
     (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate preview").into_response()
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// CROSSPOINT DEVICE API
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+struct ProbeParams {
+    ip: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ProbeResponse {
+    status: String,   // "online_crosspoint" | "online_stock" | "offline"
+    firmware: Option<String>,
+}
+
+/// `GET /api/crosspoint/probe?ip=X` — probe whether an X4 device is reachable.
+/// Tries CrossPoint firmware first (/api/status), then stock (/list?dir=/).
+async fn handle_crosspoint_probe(
+    axum::extract::Query(params): axum::extract::Query<ProbeParams>,
+) -> Json<ProbeResponse> {
+    // Sanitise: only allow IPs / hostnames with safe chars
+    let ip = &params.ip;
+    if !ip.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_') {
+        return Json(ProbeResponse { status: "offline".into(), firmware: None });
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_default();
+
+    // CrossPoint firmware
+    if let Ok(resp) = client.get(format!("http://{}/api/status", ip)).send().await {
+        if resp.status().is_success() {
+            return Json(ProbeResponse {
+                status: "online_crosspoint".into(),
+                firmware: Some("crosspoint".into()),
+            });
+        }
+    }
+
+    // Stock firmware
+    if let Ok(resp) = client.get(format!("http://{}/list?dir=/", ip)).send().await {
+        if resp.status().is_success() {
+            return Json(ProbeResponse {
+                status: "online_stock".into(),
+                firmware: Some("stock".into()),
+            });
+        }
+    }
+
+    Json(ProbeResponse { status: "offline".into(), firmware: None })
+}
+
+#[derive(Debug, Deserialize)]
+struct SendPayload {
+    ip: String,
+    firmware: String,  // "crosspoint" | "stock"
+    date: String,      // YYYYMMDD
+}
+
+#[derive(Debug, Serialize)]
+struct SendResponse {
+    success: bool,
+    message: String,
+    already_sent: bool,
+}
+
+/// `POST /api/crosspoint/send` — read the EPUB for `date` and push it to the X4.
+async fn handle_crosspoint_send(
+    State(state): State<AppState>,
+    Json(payload): Json<SendPayload>,
+) -> Json<SendResponse> {
+    let ip = &payload.ip;
+    if !ip.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_') {
+        return Json(SendResponse { success: false, message: "Invalid device IP".into(), already_sent: false });
+    }
+
+    // Locate EPUB file for the requested date
+    let epub_path = state.data_dir.join(format!("news-{}.epub", payload.date));
+    if !epub_path.exists() {
+        return Json(SendResponse {
+            success: false,
+            message: format!("EPUB not found for date {}", payload.date),
+            already_sent: false,
+        });
+    }
+
+    // Check sent history
+    let history_path = state.data_dir.join("crosspoint_sent.json");
+    let mut history: serde_json::Value = if history_path.exists() {
+        std::fs::read_to_string(&history_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let history_key = format!("{}_{}", payload.date, ip);
+    if history.get(&history_key).is_some() {
+        return Json(SendResponse {
+            success: true,
+            message: "Already sent — file is on the device.".into(),
+            already_sent: true,
+        });
+    }
+
+    let epub_bytes = match std::fs::read(&epub_path) {
+        Ok(b) => b,
+        Err(e) => return Json(SendResponse {
+            success: false,
+            message: format!("Failed to read EPUB: {}", e),
+            already_sent: false,
+        }),
+    };
+
+    let filename = format!("news-{}.epub", payload.date);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    let part = reqwest::multipart::Part::bytes(epub_bytes)
+        .file_name(filename.clone())
+        .mime_str("application/epub+zip")
+        .unwrap();
+
+    let upload_result = if payload.firmware == "crosspoint" {
+        let form = reqwest::multipart::Form::new().part("file", part);
+        client
+            .post(format!("http://{}/upload?path=/", ip))
+            .multipart(form)
+            .send()
+            .await
+    } else {
+        // Stock firmware
+        let form = reqwest::multipart::Form::new()
+            .part("name", reqwest::multipart::Part::text(format!("/{}", filename)))
+            .part("data", part);
+        client
+            .post(format!("http://{}/edit", ip))
+            .multipart(form)
+            .send()
+            .await
+    };
+
+    match upload_result {
+        Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 302 => {
+            // Record in sent history
+            history[&history_key] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+            let _ = std::fs::write(&history_path, serde_json::to_string_pretty(&history).unwrap_or_default());
+            info!("Crosspoint: sent {} to {}", filename, ip);
+            Json(SendResponse { success: true, message: "File sent successfully.".into(), already_sent: false })
+        }
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            warn!("Crosspoint: device {} returned HTTP {}", ip, status);
+            Json(SendResponse {
+                success: false,
+                message: format!("Device returned HTTP {}", status),
+                already_sent: false,
+            })
+        }
+        Err(e) => {
+            warn!("Crosspoint: send to {} failed: {}", ip, e);
+            Json(SendResponse { success: false, message: format!("Connection failed: {}", e), already_sent: false })
+        }
+    }
+}
+
+/// `GET /api/crosspoint/history` — return sent history so the UI can check per-date state.
+async fn handle_crosspoint_history(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = state.data_dir.join("crosspoint_sent.json");
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                return Ok(Json(v));
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({})))
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // BACKGROUND CLEANUP TASK
@@ -748,6 +946,9 @@ async fn main() {
         .route("/api/scrape/regen-audio", post(handle_regen_audio))
         .route("/api/scrape/logs", get(handle_scrape_logs))
         .route("/api/tts/preview", get(handle_tts_preview))
+        .route("/api/crosspoint/probe", get(handle_crosspoint_probe))
+        .route("/api/crosspoint/send", post(handle_crosspoint_send))
+        .route("/api/crosspoint/history", get(handle_crosspoint_history))
         // Serve generated media (EPUB + MP3) under /media/
         .nest_service("/media", ServeDir::new(&*data_dir))
         // Serve the single-page frontend for all other routes
