@@ -733,7 +733,13 @@
             <option value="latte">    ☀️ Latte</option>
           </select>
         </div>
-        
+
+        <!-- Skip paywalled posts -->
+        <div style="display:flex; align-items:center; gap:0.75rem; background:var(--ctp-base); padding:0.75rem; border-radius:8px; border:1px solid var(--ctp-surface0);">
+          <input type="checkbox" id="skipPaywalledCheckbox" style="cursor:pointer; width:18px; height:18px; accent-color:var(--ctp-blue);">
+          <label for="skipPaywalledCheckbox" style="cursor:pointer; flex:1; font-weight:500; font-size:0.9rem; color:var(--ctp-text);">Skip paywalled/truncated posts</label>
+        </div>
+
         <!-- RSS Feeds configuration -->
         <div>
           <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">RSS FEEDS OR SUBSTACK DOMAINS (ONE URL PER LINE)</div>

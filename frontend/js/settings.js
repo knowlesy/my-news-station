@@ -42,6 +42,8 @@ async function postConfig(partial) {
 // ── Voice + per-briefing source selection ────────────────────────
 // (config.json-backed; falls back to legacy localStorage values once)
 export function loadSettings() {
+  $('skipPaywalledCheckbox').checked = currentConfig.skip_paywalled_posts !== false;
+
   $('voiceShortSelect').value = currentConfig.voice_short
     || localStorage.getItem('voice_short') || 'en-GB-SoniaNeural';
   $('voiceLongSelect').value = currentConfig.voice_long
@@ -84,6 +86,7 @@ export function getSelectedSources(type) {
 export async function saveSettings() {
   try {
     await postConfig({
+      skip_paywalled_posts: $('skipPaywalledCheckbox').checked,
       voice_short: $('voiceShortSelect').value,
       voice_long: $('voiceLongSelect').value,
       sources_short: getSelectedSources('short'),

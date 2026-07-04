@@ -641,6 +641,34 @@ def format_text_to_html(text: str) -> str:
 # CONTENT EXTRACTION (Reader Mode via trafilatura)
 # ═══════════════════════════════════════════════════════════════════
 
+def is_paywalled_content(content: str) -> bool:
+    """Detect if article content contains paywall indicators (truncated/paywalled)."""
+    if not content:
+        return False
+
+    content_lower = content.lower()
+    paywall_patterns = [
+        "sign up to read",
+        "subscribe to continue",
+        "subscribe to read",
+        "subscribe for",
+        "unlock this story",
+        "unlock this article",
+        "member-only story",
+        "member-only article",
+        "members only",
+        "membership required",
+        "support our journalism",
+        "subscribe for just",
+        "sign up for free",
+        "read full article",
+        "read the rest",
+        "continue reading",
+        "upgrade to read",
+    ]
+    return any(pattern in content_lower for pattern in paywall_patterns)
+
+
 async def extract_article_content(context, article: dict) -> dict:
     """
     Render the article URL with the stealth browser and pass the full HTML
@@ -687,6 +715,9 @@ async def extract_article_content(context, article: dict) -> dict:
                 include_formatting=True,
             )
         article["content"] = extracted or article.get("summary", f"[Content unavailable: {url}]")
+        article["is_paywalled"] = is_paywalled_content(article["content"])
+        if article["is_paywalled"]:
+            log.info("  ↳ Detected paywalled content: %s", article.get("title", url)[:60])
         article["author"] = extract_author(html)
         article["images"] = extract_images(html)
     else:
@@ -1114,6 +1145,14 @@ async def run_pipeline() -> None:
         finally:
             await context.close()
             await browser.close()
+
+        # Filter out paywalled content if enabled
+        config = load_json(CONFIG_PATH, {})
+        if config.get("skip_paywalled_posts", True):
+            paywalled_count = sum(1 for a in all_articles if a.get("is_paywalled", False))
+            all_articles = [a for a in all_articles if not a.get("is_paywalled", False)]
+            if paywalled_count > 0:
+                log.info("Skipped %d paywalled/truncated posts", paywalled_count)
 
     # ── Phase 2: Curate ──────────────────────────────────────────
     all_articles = curate_audio_highlights(all_articles)

@@ -93,6 +93,12 @@ struct AppConfig {
     sources_short: Vec<String>,
     #[serde(default)]
     sources_long: Vec<String>,
+    #[serde(default = "default_skip_paywalled")]
+    skip_paywalled_posts: bool,
+}
+
+fn default_skip_paywalled() -> bool {
+    true
 }
 
 impl Default for AppConfig {
@@ -177,6 +183,7 @@ impl Default for AppConfig {
             voice_long: None,
             sources_short: Vec::new(),
             sources_long: Vec::new(),
+            skip_paywalled_posts: true,
         }
     }
 }
