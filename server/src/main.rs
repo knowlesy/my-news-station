@@ -1178,3 +1178,79 @@ async fn main() {
         .await
         .expect("Server error");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xml_escape_entities() {
+        assert_eq!(
+            xml_escape(r#"a & b <tag> "quoted""#),
+            "a &amp; b &lt;tag&gt; &quot;quoted&quot;"
+        );
+        assert_eq!(xml_escape("plain"), "plain");
+    }
+
+    /// Temp dir that cleans itself up even if the test panics.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("news-test-{}-{}", name, std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn media_files_grouped_by_date_key_newest_first() {
+        let tmp = TempDir::new("media");
+        for f in [
+            "daily-news-20260704-060101.epub",
+            "daily-tldr-20260704-060101.epub",
+            "short-radio-20260704-060101.mp3",
+            "long-podcast-20260704-060101.mp3",
+            "daily-news-20260703-060131.epub",
+            "notes.txt",           // ignored: not epub/mp3
+            "random.epub",         // ignored: no embedded date
+        ] {
+            std::fs::write(tmp.0.join(f), b"").unwrap();
+        }
+
+        let entries = list_media_files(&tmp.0);
+        assert_eq!(entries.len(), 2);
+
+        // Newest date group first, with every artifact slotted correctly
+        assert_eq!(entries[0].date, "20260704-060101");
+        assert_eq!(entries[0].epub.as_deref(), Some("daily-news-20260704-060101.epub"));
+        assert_eq!(entries[0].tldr.as_deref(), Some("daily-tldr-20260704-060101.epub"));
+        assert_eq!(entries[0].radio.as_deref(), Some("short-radio-20260704-060101.mp3"));
+        assert_eq!(entries[0].podcast.as_deref(), Some("long-podcast-20260704-060101.mp3"));
+
+        assert_eq!(entries[1].date, "20260703-060131");
+        assert_eq!(entries[1].tldr, None);
+        assert_eq!(entries[1].radio, None);
+    }
+
+    #[test]
+    fn app_config_defaults_are_permissive() {
+        // A config.json written before these fields existed must deserialize
+        // with everything enabled — this is what protects old installs.
+        let cfg: AppConfig = serde_json::from_str(
+            r#"{"rss_feeds": [], "medium_tags": []}"#
+        ).unwrap();
+        assert!(cfg.opds_enabled);
+        assert!(cfg.enable_radio && cfg.enable_podcast && cfg.enable_tldr);
+        assert!(cfg.skip_paywalled_posts);
+        assert!(cfg.llm_radio.is_none());
+    }
+}

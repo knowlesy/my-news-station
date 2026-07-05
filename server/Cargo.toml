@@ -3,6 +3,7 @@ name        = "news-server"
 version     = "0.1.0"
 edition     = "2021"
 description = "Axum web server for the Daily News Media Station"
+license     = "MIT"
 
 [[bin]]
 name = "server"
