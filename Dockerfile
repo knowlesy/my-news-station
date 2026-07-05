@@ -40,7 +40,7 @@ RUN touch src/main.rs && cargo build --release
 #   • Python 3.11
 #   • Node.js 18
 #   • Chromium + all system dependencies
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy
 
 # Build identity — passed via --build-arg from CI, surfaced at /api/version
 ARG GIT_SHA=dev
