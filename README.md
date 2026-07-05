@@ -77,11 +77,11 @@ Editions use compact titles (`260704-news-ai`, `260704-newsTLDR-ai`) so the date
 
 Set the default with `LLM_BACKEND` (and override per output in Settings):
 
-| Value        | Description                                | Required credentials        |
-|--------------|--------------------------------------------|-----------------------------|
-| `gemini`     | Google AI Studio REST                      | `GOOGLE_AI_KEY`             |
-| `claude_cli` | Claude via OAuth (no API key needed)       | One-time auth flow (below)  |
-| `claude_api` | Anthropic API                              | `ANTHROPIC_API_KEY`         |
+| Value        | Description                                | Required credentials        | Tested |
+|--------------|--------------------------------------------|-----------------------------|--------|
+| `gemini`     | Google AI Studio REST                      | `GOOGLE_AI_KEY`             | ✅     |
+| `claude_cli` | Claude via OAuth (no API key needed)       | One-time auth flow (below)  | ⚠️ untested |
+| `claude_api` | Anthropic API                              | `ANTHROPIC_API_KEY`         | ⚠️ untested |
 
 **Claude CLI OAuth** (no API key): exec into the running container with `docker exec -it my-news-server claude`, open the printed URL, log in, paste the code back. Credentials persist in a volume.
 

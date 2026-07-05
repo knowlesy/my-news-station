@@ -2,3 +2,4 @@
  - multi-user support (per-user settings, auth, per-user sources/voices) — if it becomes a thing
  - remove the send to x4 config — deprecate once OPDS pull has been tested on the device for a while
  - allow for pay wall content and how to manage that (Phase 2: auto-signin with per-site credentials)
+ - configurable day storage/cleanup
