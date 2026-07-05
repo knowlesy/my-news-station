@@ -102,6 +102,24 @@ struct AppConfig {
     /// pull path for e-readers; disable if you don't want it exposed.
     #[serde(default = "default_opds_enabled")]
     opds_enabled: bool,
+    // Per-task LLM backend overrides (None = server's LLM_BACKEND env) and
+    // per-output enable flags. Consumed by the scraper via config.json.
+    #[serde(default)]
+    llm_radio: Option<String>,
+    #[serde(default)]
+    llm_podcast: Option<String>,
+    #[serde(default)]
+    llm_tldr: Option<String>,
+    #[serde(default = "default_true")]
+    enable_radio: bool,
+    #[serde(default = "default_true")]
+    enable_podcast: bool,
+    #[serde(default = "default_true")]
+    enable_tldr: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_skip_paywalled() -> bool {
@@ -196,6 +214,12 @@ impl Default for AppConfig {
             sources_long: Vec::new(),
             skip_paywalled_posts: true,
             opds_enabled: true,
+            llm_radio: None,
+            llm_podcast: None,
+            llm_tldr: None,
+            enable_radio: true,
+            enable_podcast: true,
+            enable_tldr: true,
         }
     }
 }
@@ -361,15 +385,18 @@ async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse,
     let date_re = Regex::new(r"\d{8}").expect("Invalid date regex");
     let mut entries = String::new();
     for (file_name, mtime) in &books {
-        let nice_date = date_re
-            .find(file_name)
-            .and_then(|m| chrono::NaiveDate::parse_from_str(m.as_str(), "%Y%m%d").ok())
-            .map(|d| d.format("%d %B %Y").to_string())
-            .unwrap_or_else(|| file_name.clone());
-        let title = if file_name.starts_with("daily-tldr-") {
-            format!("TLDR Digest — {}", nice_date)
-        } else {
-            format!("Daily News — {}", nice_date)
+        // Compact titles — e-reader lists truncate long ones, and the date
+        // is the part that matters: yymmdd-news-ai / yymmdd-newsTLDR-ai
+        let title = match date_re.find(file_name) {
+            Some(m) => {
+                let yymmdd = &m.as_str()[2..];
+                if file_name.starts_with("daily-tldr-") {
+                    format!("{}-newsTLDR-ai", yymmdd)
+                } else {
+                    format!("{}-news-ai", yymmdd)
+                }
+            }
+            None => file_name.clone(),
         };
         entries.push_str(&format!(
             r#"  <entry>

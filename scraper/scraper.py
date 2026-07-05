@@ -57,6 +57,10 @@ RSS_FEEDS: list[dict] = []
 MEDIUM_TAGS: list[str] = []
 SOURCES_SHORT: list[str] = []
 SOURCES_LONG: list[str] = []
+# Per-task LLM backend overrides ("" = use LLM_BACKEND env default) and
+# per-output enable flags — both owned by config.json (Settings UI).
+TASK_LLM: dict[str, str] = {"radio": "", "podcast": "", "tldr": ""}
+OUTPUT_ENABLED: dict[str, bool] = {"radio": True, "podcast": True, "tldr": True}
 
 # Sources whose article pages hard-block automated fetches at the network
 # level (Akamai edge, in Daily Mail's case) regardless of browser fingerprint —
@@ -147,6 +151,7 @@ def load_config() -> None:
     data directory — fail loudly rather than silently scraping nothing.
     """
     global RSS_FEEDS, MEDIUM_TAGS, SYSTEM_PROMPT, SOURCES_SHORT, SOURCES_LONG
+    global TASK_LLM, OUTPUT_ENABLED
 
     cfg = load_json(CONFIG_PATH, None)
     if cfg is None:
@@ -162,6 +167,23 @@ def load_config() -> None:
     MEDIUM_TAGS = list(cfg.get("medium_tags") or [])
     SOURCES_SHORT = list(cfg.get("sources_short") or [])
     SOURCES_LONG = list(cfg.get("sources_long") or [])
+
+    TASK_LLM = {
+        "radio":   (cfg.get("llm_radio") or "").strip(),
+        "podcast": (cfg.get("llm_podcast") or "").strip(),
+        "tldr":    (cfg.get("llm_tldr") or "").strip(),
+    }
+    OUTPUT_ENABLED = {
+        "radio":   cfg.get("enable_radio") is not False,
+        "podcast": cfg.get("enable_podcast") is not False,
+        "tldr":    cfg.get("enable_tldr") is not False,
+    }
+    disabled = [t for t, on in OUTPUT_ENABLED.items() if not on]
+    if disabled:
+        log.info("Outputs disabled in settings: %s", ", ".join(disabled))
+    overrides = {t: b for t, b in TASK_LLM.items() if b}
+    if overrides:
+        log.info("Per-task LLM overrides: %s", overrides)
 
     # Drop silenced sources entirely — no scrape, no extraction, no EPUB
     silenced = set(cfg.get("silenced_sources") or [])
@@ -293,19 +315,58 @@ def call_claude_cli(prompt: str) -> str:
     return output
 
 
-def call_llm(prompt: str) -> str:
-    """Route to the configured LLM backend (LLM_BACKEND env var)."""
+def call_llm(prompt: str, backend: str | None = None) -> str:
+    """Route to an LLM backend — per-task config override, else LLM_BACKEND env."""
+    backend = backend or LLM_BACKEND
     backends = {
         "gemini":      call_gemini,
         "claude_api":  call_claude_api,
         "claude_cli":  call_claude_cli,
     }
-    if LLM_BACKEND not in backends:
+    if backend not in backends:
         raise ValueError(
-            f"Unknown LLM_BACKEND={LLM_BACKEND!r}. "
+            f"Unknown LLM backend {backend!r}. "
             f"Valid options: {list(backends.keys())}"
         )
-    return backends[LLM_BACKEND](prompt)
+    return backends[backend](prompt)
+
+
+def resolve_task_backend(task: str) -> str:
+    """Backend for a task ("radio"/"podcast"/"tldr"): config override or env default."""
+    return TASK_LLM.get(task) or LLM_BACKEND
+
+
+def run_llm_tasks(all_articles: list[dict], tasks: list[str] | None = None) -> dict[str, str]:
+    """
+    Run the LLM for the given tasks, grouping tasks that share a backend
+    into one combined call (so all-default configs still cost a single
+    call, while e.g. gemini-radio + claude-tldr split into two).
+
+    tasks=None → every output enabled in settings. Returns task → raw
+    LLM response (the same response object shared within a group).
+    """
+    if tasks is None:
+        tasks = [t for t in ("radio", "podcast", "tldr") if OUTPUT_ENABLED[t]]
+    if not tasks:
+        log.info("All LLM outputs disabled in settings — skipping LLM entirely")
+        return {}
+
+    groups: dict[str, list[str]] = {}
+    for t in tasks:
+        groups.setdefault(resolve_task_backend(t), []).append(t)
+
+    responses: dict[str, str] = {}
+    for backend, group in groups.items():
+        tracks = tuple(t for t in group if t in ("radio", "podcast"))
+        include_tldr = "tldr" in group
+        prompt = build_prompt(all_articles, tracks=tracks, include_tldr=include_tldr)
+        log.info("→ LLM call [%s] for %s  (prompt %d chars)",
+                 backend, "+".join(group), len(prompt))
+        resp = call_llm(prompt, backend)
+        log.info("LLM response received [%s]: %d chars", backend, len(resp))
+        for t in group:
+            responses[t] = resp
+    return responses
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1065,6 +1126,30 @@ p {
 a { color: #89b4fa; }
 """
 
+# The TLDR digest is a scan-density read: tight line-height, small margins,
+# and left-aligned text (justify stretches words into ugly gaps on narrow
+# e-ink screens). Relative units only, so it scales to any reader size.
+TLDR_EPUB_CSS = """
+body {
+    font-family: sans-serif;
+    line-height: 1.3;
+    margin: 0.4em 0.6em;
+    color: #1a1a2e;
+}
+h2 {
+    font-size: 1.05em;
+    margin: 0.7em 0 0.3em 0;
+    padding-bottom: 0.15em;
+    border-bottom: 1px solid #6c7086;
+}
+p {
+    text-align: left;
+    margin: 0.4em 0;
+    font-size: 0.92em;
+}
+strong { font-size: 0.95em; }
+"""
+
 
 def build_epub(all_articles: list[dict], date_str: str) -> Path:
     """
@@ -1075,7 +1160,9 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
 
     book = epub.EpubBook()
     book.set_identifier(f"daily-news-{date_str}")
-    book.set_title(f"Daily News — {datetime.strptime(date_str[:8], '%Y%m%d').strftime('%d %B %Y')}")
+    # Compact title — e-reader library lists truncate long ones, and the
+    # date is the part that matters. yymmdd-news-ai, e.g. 260704-news-ai
+    book.set_title(f"{date_str[2:8]}-news-ai")
     book.set_language("en")
     book.add_author("AI News Station")
     book.add_metadata("DC", "description", "Automated daily news digest")
@@ -1220,11 +1307,10 @@ def build_tldr_epub(tldr_text: str, date_str: str) -> Path | None:
         log.warning("TLDR digest text is empty — skipping TLDR EPUB")
         return None
 
-    nice_date = datetime.strptime(date_str[:8], "%Y%m%d").strftime("%d %B %Y")
-
     book = epub.EpubBook()
     book.set_identifier(f"daily-tldr-{date_str}")
-    book.set_title(f"TLDR Digest — {nice_date}")
+    # Compact title (see build_epub) — yymmdd-newsTLDR-ai
+    book.set_title(f"{date_str[2:8]}-newsTLDR-ai")
     book.set_language("en")
     book.add_author("AI News Station")
     book.add_metadata("DC", "description", "One-sentence summaries of the day's news")
@@ -1233,7 +1319,7 @@ def build_tldr_epub(tldr_text: str, date_str: str) -> Path | None:
         uid="main-style",
         file_name="style/main.css",
         media_type="text/css",
-        content=EPUB_CSS,
+        content=TLDR_EPUB_CSS,
     )
     book.add_item(css_item)
 
@@ -1431,24 +1517,18 @@ async def run_pipeline() -> None:
     all_articles = curate_audio_highlights(all_articles)
 
     # ── Phase 3: LLM Processing ───────────────────────────────────
-    log.info("Building mega-prompt and calling LLM…")
-    prompt = build_prompt(all_articles)
-    log.info("Prompt size (chars): %d", len(prompt))
-    llm_response = call_llm(prompt)
-    log.info("LLM response received. Length: %d characters", len(llm_response))
-    if len(llm_response) > 0:
-        log.info("Response preview (first 500 chars):\n%s", llm_response[:500])
-    else:
-        log.warning("LLM response is completely empty!")
+    # One call per configured backend, covering only the outputs enabled in
+    # settings (disabled outputs cost zero LLM tokens).
+    responses = run_llm_tasks(all_articles)
 
     # ── Phase 4: Parse XML blocks ─────────────────────────────────
-    short_radio  = extract_xml_block(llm_response, "short_radio")
-    long_podcast = extract_xml_block(llm_response, "long_podcast")
-    tldr_digest  = extract_xml_block(llm_response, "tldr_digest")
+    short_radio  = extract_xml_block(responses["radio"], "short_radio") if "radio" in responses else ""
+    long_podcast = extract_xml_block(responses["podcast"], "long_podcast") if "podcast" in responses else ""
 
     # ── Phase 5: Build EPUBs (full edition + TLDR digest) ────────
     build_epub(all_articles, date_str)
-    build_tldr_epub(tldr_digest, date_str)
+    if "tldr" in responses:
+        build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
 
     # ── Phase 5b: Save article sidecar for later audio regen ─────
     # Use date-only key (YYYYMMDD) so regen can always find it by date prefix
@@ -1592,11 +1672,9 @@ async def run_regen_audio(date_str: str) -> None:
         return
 
     if regen_track == "tldr":
-        log.info("TLDR-only regen: building digest prompt and calling LLM…")
-        prompt = build_prompt(all_articles, tracks=(), include_tldr=True)
-        llm_response = call_llm(prompt)
-        log.info("LLM response received (%d chars)", len(llm_response))
-        build_tldr_epub(extract_xml_block(llm_response, "tldr_digest"), date_str)
+        log.info("TLDR-only regen requested")
+        responses = run_llm_tasks(all_articles, ["tldr"])
+        build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
         log.info("══════════════════════════════════════════════════")
         log.info("  TLDR digest regen complete — %s", date_str)
         log.info("══════════════════════════════════════════════════")
@@ -1606,22 +1684,19 @@ async def run_regen_audio(date_str: str) -> None:
     all_articles = curate_audio_highlights(all_articles)
 
     if regen_track in ("radio", "podcast"):
-        tracks: tuple[str, ...] = (regen_track,)
-        include_tldr = False
+        # Explicit user intent — regenerate even if disabled in settings
         log.info("Single-track regen requested: %s only", regen_track)
+        tasks = [regen_track]
     else:
-        tracks = ("radio", "podcast")
-        include_tldr = True
+        # Legacy full regen: everything currently enabled in settings
+        tasks = [t for t in ("radio", "podcast", "tldr") if OUTPUT_ENABLED[t]]
 
-    log.info("Building prompt and calling LLM…")
-    prompt = build_prompt(all_articles, tracks=tracks, include_tldr=include_tldr)
-    llm_response = call_llm(prompt)
-    log.info("LLM response received (%d chars)", len(llm_response))
+    responses = run_llm_tasks(all_articles, tasks)
 
-    if include_tldr:
+    if "tldr" in responses:
         # Full regen re-calls the LLM anyway, so refresh the TLDR digest too
         # (overwrites the existing daily-tldr file for this date key)
-        build_tldr_epub(extract_xml_block(llm_response, "tldr_digest"), date_str)
+        build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
 
     # Name the MP3s with the full group key passed by the frontend (usually
     # YYYYMMDD-HHMMSS, matching the EPUB's timestamp). The server groups media
@@ -1629,15 +1704,15 @@ async def run_regen_audio(date_str: str) -> None:
     # of appearing as a separate date — and overwrites pipeline audio in place.
     tts_jobs = []
     files_written = []
-    if "radio" in tracks:
+    if "radio" in responses:
         radio_path = DATA_DIR / f"short-radio-{date_str}.mp3"
         tts_jobs.append(generate_tts(
-            extract_xml_block(llm_response, "short_radio"), radio_path, VOICE_SHORT))
+            extract_xml_block(responses["radio"], "short_radio"), radio_path, VOICE_SHORT))
         files_written.append(radio_path.name)
-    if "podcast" in tracks:
+    if "podcast" in responses:
         podcast_path = DATA_DIR / f"long-podcast-{date_str}.mp3"
         tts_jobs.append(generate_tts(
-            extract_xml_block(llm_response, "long_podcast"), podcast_path, VOICE_LONG))
+            extract_xml_block(responses["podcast"], "long_podcast"), podcast_path, VOICE_LONG))
         files_written.append(podcast_path.name)
 
     await asyncio.gather(*tts_jobs)

@@ -787,6 +787,53 @@
           </div>
         </div>
 
+        <!-- AI & Outputs: per-task backend + on/off per output -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">AI &amp; OUTPUTS</div>
+          <div style="display:flex; flex-direction:column; gap:0.4rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.8rem; flex:1;">
+                <input type="checkbox" id="enableRadioCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                📻 Flash briefing
+              </label>
+              <select id="llmRadioSelect" style="height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; font-size:0.72rem; padding:0 0.4rem; outline:none;">
+                <option value="">Default backend</option>
+                <option value="gemini">Gemini</option>
+                <option value="claude_api">Claude API</option>
+                <option value="claude_cli">Claude CLI</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.8rem; flex:1;">
+                <input type="checkbox" id="enablePodcastCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                🎧 Full podcast
+              </label>
+              <select id="llmPodcastSelect" style="height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; font-size:0.72rem; padding:0 0.4rem; outline:none;">
+                <option value="">Default backend</option>
+                <option value="gemini">Gemini</option>
+                <option value="claude_api">Claude API</option>
+                <option value="claude_cli">Claude CLI</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.8rem; flex:1;">
+                <input type="checkbox" id="enableTldrCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                ⚡ TLDR digest
+              </label>
+              <select id="llmTldrSelect" style="height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; font-size:0.72rem; padding:0 0.4rem; outline:none;">
+                <option value="">Default backend</option>
+                <option value="gemini">Gemini</option>
+                <option value="claude_api">Claude API</option>
+                <option value="claude_cli">Claude CLI</option>
+              </select>
+            </div>
+          </div>
+          <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.35rem; line-height:1.4;">
+            ⓘ Unticked outputs are skipped on the daily run — zero LLM cost for them. Outputs sharing a backend share one LLM call.
+            "Default backend" = the server's LLM_BACKEND setting. You can still rebuild a disabled output on demand from its card.
+          </div>
+        </div>
+
         <!-- OPDS Catalog (e-reader pull) -->
         <div>
           <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">OPDS CATALOG (E-READER PULL)</div>

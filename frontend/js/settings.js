@@ -341,6 +341,12 @@ function toggleOptionsModal() {
     $('systemPromptInput').value = currentConfig.system_prompt || '';
     $('opdsEnabledCheckbox').checked = currentConfig.opds_enabled !== false;
     $('opdsUrlDisplay').textContent = `${window.location.origin}/opds`;
+    $('enableRadioCheckbox').checked = currentConfig.enable_radio !== false;
+    $('enablePodcastCheckbox').checked = currentConfig.enable_podcast !== false;
+    $('enableTldrCheckbox').checked = currentConfig.enable_tldr !== false;
+    $('llmRadioSelect').value = currentConfig.llm_radio || '';
+    $('llmPodcastSelect').value = currentConfig.llm_podcast || '';
+    $('llmTldrSelect').value = currentConfig.llm_tldr || '';
     renderSourceHealth();
     syncFromConfig(currentConfig);
     renderCrosspointDevices();
@@ -411,6 +417,12 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       silenced_sources: silenced_sources,
       system_prompt: system_prompt,
       opds_enabled: $('opdsEnabledCheckbox').checked,
+      enable_radio: $('enableRadioCheckbox').checked,
+      enable_podcast: $('enablePodcastCheckbox').checked,
+      enable_tldr: $('enableTldrCheckbox').checked,
+      llm_radio: $('llmRadioSelect').value || null,
+      llm_podcast: $('llmPodcastSelect').value || null,
+      llm_tldr: $('llmTldrSelect').value || null,
       ...getDeviceSaveState(),
     });
 
