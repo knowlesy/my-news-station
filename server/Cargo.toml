@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # ── Web framework ─────────────────────────────────────────────────
-axum        = { version = "0.7", features = ["macros"] }
+axum        = { version = "0.8", features = ["macros"] }
 tokio       = { version = "1",   features = ["full"] }
 
 # ── Static file serving & middleware ─────────────────────────────
