@@ -22,7 +22,7 @@ requests>=2.32.0
 scikit-learn>=1.5.0
 
 # ── EPUB generation ──────────────────────────────────────────────
-ebooklib>=0.18
+ebooklib>=0.20
 
 # ── Text-to-speech ───────────────────────────────────────────────
 edge-tts>=6.1.12
