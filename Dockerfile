@@ -11,7 +11,7 @@
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Stage 1: Compile Rust web server ────────────────────────────────────────
-FROM rust:1.86-slim-bookworm AS rust-builder
+FROM rust:1.96-slim-bookworm AS rust-builder
 
 WORKDIR /build
 
