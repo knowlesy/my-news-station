@@ -18,7 +18,7 @@ use axum::{
     Router,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -116,6 +116,15 @@ struct AppConfig {
     enable_podcast: bool,
     #[serde(default = "default_true")]
     enable_tldr: bool,
+    /// Days without activity before a source is flagged as dead in the health panel.
+    #[serde(default = "default_source_health_dead_days")]
+    source_health_dead_days: u32,
+    /// Hour (UTC, 0–23) at which the internal daily scheduler fires the scraper.
+    #[serde(default = "default_daily_run_hour")]
+    daily_run_hour: u8,
+    /// Minute (0–59) at which the internal daily scheduler fires the scraper.
+    #[serde(default)]
+    daily_run_minute: u8,
 }
 
 fn default_true() -> bool {
@@ -128,6 +137,23 @@ fn default_skip_paywalled() -> bool {
 
 fn default_opds_enabled() -> bool {
     true
+}
+
+fn default_source_health_dead_days() -> u32 {
+    30
+}
+
+fn default_daily_run_hour() -> u8 {
+    6
+}
+
+/// Read config.json from disk, returning defaults on any error.
+fn load_app_config(data_dir: &std::path::Path) -> AppConfig {
+    let path = data_dir.join("config.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
+        .unwrap_or_default()
 }
 
 impl Default for AppConfig {
@@ -220,6 +246,9 @@ impl Default for AppConfig {
             enable_radio: true,
             enable_podcast: true,
             enable_tldr: true,
+            source_health_dead_days: 30,
+            daily_run_hour: 6,
+            daily_run_minute: 0,
         }
     }
 }
@@ -1067,6 +1096,33 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
     }
 }
 
+/// Wakes every 30 s, checks the configured daily run time (UTC), and fires the
+/// scraper when the clock matches — once per calendar day regardless of restarts.
+async fn daily_scheduler_loop(state: AppState) {
+    let mut last_triggered_date: Option<String> = None;
+    loop {
+        time::sleep(time::Duration::from_secs(30)).await;
+        let config = load_app_config(&state.data_dir);
+        let now = Utc::now();
+        let today = now.format("%Y-%m-%d").to_string();
+        if now.hour() as u8 == config.daily_run_hour
+            && now.minute() as u8 == config.daily_run_minute
+            && last_triggered_date.as_deref() != Some(today.as_str())
+        {
+            last_triggered_date = Some(today.clone());
+            if !state.is_scraping.swap(true, Ordering::SeqCst) {
+                info!(
+                    "Daily scheduler: triggering scraper at {:02}:{:02} UTC",
+                    config.daily_run_hour, config.daily_run_minute
+                );
+                spawn_scraper_job(state.clone(), vec![], "scheduled daily run");
+            } else {
+                info!("Daily scheduler: scraper already running at trigger time, skipping");
+            }
+        }
+    }
+}
+
 /// Infinite loop that fires the cleanup task every 6 hours.
 async fn cleanup_loop(data_dir: Arc<PathBuf>) {
     // Run once immediately on startup so stale files from a previous run are cleared.
@@ -1134,6 +1190,9 @@ async fn main() {
         scraper_logs: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         last_run_success: Arc::new(AtomicBool::new(true)),
     };
+
+    // ── Spawn internal daily scheduler ────────────────────────────
+    tokio::spawn(daily_scheduler_loop(state.clone()));
 
     let app = Router::new()
         // Version check for frontend upgrades

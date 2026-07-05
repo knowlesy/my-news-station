@@ -214,12 +214,13 @@ function renderSourceCheckboxes(type, sources) {
        const entry = sourceActivity[src];
        const lastSeen = typeof entry === 'string' ? entry : entry?.last_seen;
        const degraded = typeof entry === 'object' && entry?.degraded;
+       const deadDays = currentConfig.source_health_dead_days ?? 30;
        if (degraded) {
          warningIcon = '<span title="Full articles blocked upstream — using RSS summary only." style="cursor:help;">🟡</span>';
        } else if (lastSeen) {
          const diffDays = (new Date() - new Date(lastSeen)) / (1000 * 60 * 60 * 24);
-         if (diffDays > 30) {
-           warningIcon = '<span title="No articles pulled for >30 days. Possibly dead." style="cursor:help;">⚠️</span>';
+         if (diffDays > deadDays) {
+           warningIcon = `<span title="No articles pulled for >${deadDays} days. Possibly dead." style="cursor:help;">⚠️</span>`;
          }
        }
     }
@@ -285,7 +286,8 @@ function renderSourceHealth() {
       const lastSeenDate = new Date(lastSeenStr);
       const diffDays = (new Date() - lastSeenDate) / (1000 * 60 * 60 * 24);
 
-      if (diffDays > 30) {
+      const deadDays = currentConfig.source_health_dead_days ?? 30;
+      if (diffDays > deadDays) {
         statusHtml = `<span style="color:var(--ctp-red); font-weight:600;" title="Last seen ${Math.floor(diffDays)} days ago">🔴 Dead</span>`;
         isDead = true;
       } else if (degraded) {
@@ -347,6 +349,11 @@ function toggleOptionsModal() {
     $('llmRadioSelect').value = currentConfig.llm_radio || '';
     $('llmPodcastSelect').value = currentConfig.llm_podcast || '';
     $('llmTldrSelect').value = currentConfig.llm_tldr || '';
+    const deadDays = currentConfig.source_health_dead_days ?? 30;
+    $('sourceHealthDeadDaysInput').value = deadDays;
+    const runHour = currentConfig.daily_run_hour ?? 6;
+    const runMin = currentConfig.daily_run_minute ?? 0;
+    $('dailyRunTimeInput').value = `${String(runHour).padStart(2, '0')}:${String(runMin).padStart(2, '0')}`;
     renderSourceHealth();
     syncFromConfig(currentConfig);
     renderCrosspointDevices();
@@ -423,6 +430,11 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       llm_radio: $('llmRadioSelect').value || null,
       llm_podcast: $('llmPodcastSelect').value || null,
       llm_tldr: $('llmTldrSelect').value || null,
+      source_health_dead_days: parseInt($('sourceHealthDeadDaysInput').value, 10) || 30,
+      ...(() => {
+        const [h, m] = $('dailyRunTimeInput').value.split(':').map(Number);
+        return { daily_run_hour: h ?? 6, daily_run_minute: m ?? 0 };
+      })(),
       ...getDeviceSaveState(),
     });
 

@@ -763,12 +763,25 @@
 
         <!-- Source Health / Silencing -->
         <div>
-          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em; display:flex; justify-content:space-between;">
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em; display:flex; justify-content:space-between; align-items:center;">
             <span>SOURCE HEALTH</span>
-            <span style="font-weight:normal; text-transform:none; font-size:0.7rem; color:var(--ctp-surface2);">*Flags sources inactive > 30 days</span>
+            <label style="font-weight:normal; text-transform:none; font-size:0.7rem; color:var(--ctp-subtext0); display:flex; align-items:center; gap:0.3rem;">
+              Dead after
+              <input type="number" id="sourceHealthDeadDaysInput" min="1" max="365" value="30" style="width:44px; height:20px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:4px; padding:0 0.3rem; font-size:0.7rem; outline:none; text-align:center;">
+              days inactive
+            </label>
           </div>
           <div id="sourceHealthContainer" style="background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.5rem; max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:0.5rem;">
             <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Daily Run Time -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">DAILY RUN TIME</div>
+          <input type="time" id="dailyRunTimeInput" value="06:00" style="height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.8rem; outline:none; font-family:monospace;">
+          <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.35rem; line-height:1.4;">
+            UTC. Internal scheduler fires the scraper daily at this time. In Kubernetes, update the CronJob schedule to match.
           </div>
         </div>
 
