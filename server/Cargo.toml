@@ -11,12 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 # ── Web framework ─────────────────────────────────────────────────
-axum        = { version = "0.7", features = ["macros"] }
+axum        = { version = "0.8", features = ["macros"] }
 tokio       = { version = "1",   features = ["full"] }
 
 # ── Static file serving & middleware ─────────────────────────────
-tower-http  = { version = "0.5", features = ["fs", "cors", "trace"] }
-tower       = { version = "0.4" }
+tower-http  = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower       = { version = "0.5" }
 
 # ── Serialisation ─────────────────────────────────────────────────
 serde       = { version = "1", features = ["derive"] }
@@ -32,7 +32,7 @@ walkdir     = "2"
 regex       = "1"
 
 # ── HTTP client (Crosspoint device proxy) ────────────────────────
-reqwest     = { version = "0.12", features = ["multipart", "stream"] }
+reqwest     = { version = "0.13", features = ["multipart", "stream"] }
 
 # ── Structured logging ────────────────────────────────────────────
 tracing             = "0.1"

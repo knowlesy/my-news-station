@@ -10,8 +10,8 @@ playwright-stealth>=1.0.6
 # ── Content extraction ───────────────────────────────────────────
 # trafilatura 2.x has relaxed lxml requirements + Python 3.14 support
 trafilatura>=2.0.0
-feedparser>=6.0.11
-beautifulsoup4>=4.12.3
+feedparser>=6.0.12
+beautifulsoup4>=4.15.0
 # lxml: let pip resolve the version compatible with trafilatura + Python 3.14
 lxml>=4.9.4
 
@@ -22,10 +22,10 @@ requests>=2.32.0
 scikit-learn>=1.5.0
 
 # ── EPUB generation ──────────────────────────────────────────────
-ebooklib>=0.18
+ebooklib>=0.20
 
 # ── Text-to-speech ───────────────────────────────────────────────
-edge-tts>=6.1.12
+edge-tts>=7.2.8
 
 # ── Anthropic SDK (claude_api backend) ───────────────────────────
-anthropic>=0.28.0
+anthropic>=0.116.0
