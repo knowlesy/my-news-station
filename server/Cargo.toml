@@ -31,8 +31,6 @@ walkdir     = "2"
 # ── Regex (file date extraction) ─────────────────────────────────
 regex       = "1"
 
-# ── HTTP client (Crosspoint device proxy) ────────────────────────
-reqwest     = { version = "0.13", features = ["multipart", "stream"] }
 
 # ── Structured logging ────────────────────────────────────────────
 tracing             = "0.1"

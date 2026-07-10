@@ -1,7 +1,6 @@
 // ── Media library: playlist, date selection, audio players ──────
 import { $, toast, setStatus, formatDate, isNewEdition } from './utils.js';
 import { loadEpub, loadTldrEpub } from './epubReader.js';
-import { refreshSendButtonForDate } from './crosspoint.js';
 import { isScrapingActive } from './scraperStatus.js';
 
 export let mediaData  = [];   // raw /api/media response
@@ -145,8 +144,6 @@ export function selectDate(dateStr) {
     tldrRegenBtn.style.display = entry.epub ? '' : 'none';
     tldrRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'tldr');
   }
-
-  refreshSendButtonForDate();
 }
 
 // ── Render an audio player card ──────────────────────────────────

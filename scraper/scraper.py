@@ -1062,11 +1062,14 @@ def extract_xml_block(text: str, tag: str) -> str:
 # EPUB BUILDER
 # ═══════════════════════════════════════════════════════════════════
 
+# Tight spacing tuned for small e-ink screens (X4): compact line-height and
+# margins, left-aligned text (justify stretches words into ugly gaps on
+# narrow screens). Relative units only, so it scales to any reader size.
 EPUB_CSS = """
 body {
     font-family: Georgia, 'Times New Roman', serif;
-    line-height: 1.8;
-    margin: 2.5em 3em;
+    line-height: 1.45;
+    margin: 0.5em 0.7em;
     color: #1a1a2e;
     background: #fafafa;
 }
@@ -1106,15 +1109,15 @@ h1 {
     color: #11111b;
 }
 h2 {
-    font-size: 1.5em;
+    font-size: 1.4em;
     color: #313244;
-    margin-top: 2.5em;
+    margin: 1em 0 0.4em 0;
     border-left: 4px solid #cba6f7;
     padding-left: 0.6em;
 }
 p {
-    text-align: justify;
-    margin: 0.8em 0;
+    text-align: left;
+    margin: 0.45em 0;
 }
 .source-tag {
     font-size: 0.8em;
@@ -1151,20 +1154,31 @@ strong { font-size: 0.95em; }
 """
 
 
-def build_epub(all_articles: list[dict], date_str: str) -> Path:
+def build_epub(
+    all_articles: list[dict],
+    date_str: str,
+    include_images: bool = True,
+    suffix: str = "",
+) -> Path:
     """
     Convert the scraped articles list into a structured EPUB 3 file directly.
     Each article becomes a separate chapter in the table of contents.
+
+    Two variants are built per edition: the full one (browser download, with
+    image references) and an "-x4" one with images stripped — e-ink readers
+    pulling via OPDS are offline and would render remote <img> tags as
+    "[Image: ...]" placeholder noise.
     """
     from html import escape as _esc
 
     book = epub.EpubBook()
-    book.set_identifier(f"daily-news-{date_str}")
+    book.set_identifier(f"daily-news-{date_str}{suffix}")
     # Compact title — e-reader library lists truncate long ones, and the
     # date is the part that matters. yymmdd-news-ai, e.g. 260704-news-ai
+    # No dc:creator: CrossPoint names downloads "{author} - {title}.epub",
+    # so any author string just bloats the filename.
     book.set_title(f"{date_str[2:8]}-news-ai")
     book.set_language("en")
-    book.add_author("AI News Station")
     book.add_metadata("DC", "description", "Automated daily news digest")
 
     # Shared CSS item
@@ -1214,8 +1228,9 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
             source_tag = f'<div class="source-tag">Source: {_esc(source)}{author_suffix}{url_link}</div>'
 
             image_html = ""
-            for img_url in article.get("images", []):
-                image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{_esc(img_url)}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
+            if include_images:
+                for img_url in article.get("images", []):
+                    image_html += f'<div style="text-align: center; margin: 1.5rem 0;"><img src="{_esc(img_url)}" alt="Article Image" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);"/></div>'
 
             chapter = epub.EpubHtml(
                 title=chapter_title,
@@ -1252,10 +1267,16 @@ def build_epub(all_articles: list[dict], date_str: str) -> Path:
     book.add_item(epub.EpubNav())
     book.spine = spine
 
-    output_path = DATA_DIR / f"daily-news-{date_str}.epub"
+    output_path = DATA_DIR / f"daily-news-{date_str}{suffix}.epub"
     epub.write_epub(str(output_path), book)
     log.info("EPUB written → %s (%d chapters)", output_path, len(chapters))
     return output_path
+
+
+def build_epub_variants(all_articles: list[dict], date_str: str) -> None:
+    """Full edition for browser download + stripped -x4 edition for OPDS."""
+    build_epub(all_articles, date_str, include_images=True)
+    build_epub(all_articles, date_str, include_images=False, suffix="-x4")
 
 
 def _parse_tldr_sections(tldr_text: str) -> list[tuple[str, list[tuple[str, str]]]]:
@@ -1312,7 +1333,7 @@ def build_tldr_epub(tldr_text: str, date_str: str) -> Path | None:
     # Compact title (see build_epub) — yymmdd-newsTLDR-ai
     book.set_title(f"{date_str[2:8]}-newsTLDR-ai")
     book.set_language("en")
-    book.add_author("AI News Station")
+    # No dc:creator — keeps the download filename to just the title (see build_epub)
     book.add_metadata("DC", "description", "One-sentence summaries of the day's news")
 
     css_item = epub.EpubItem(
@@ -1433,6 +1454,24 @@ def merge_todays_articles(all_articles: list[dict], date_str: str) -> list[dict]
     return merged + all_articles
 
 
+def apply_source_order(all_articles: list[dict], config: dict) -> list[dict]:
+    """
+    Stable-sort articles by the Settings source_order list (case-insensitive).
+    Sources not in the list keep their scrape order, after the listed ones.
+    """
+    order = [s.strip().lower() for s in config.get("source_order", []) if s.strip()]
+    if not order:
+        return all_articles
+
+    def rank(article: dict) -> int:
+        try:
+            return order.index(article.get("source", "").strip().lower())
+        except ValueError:
+            return len(order)
+
+    return sorted(all_articles, key=rank)
+
+
 async def run_pipeline() -> None:
     load_config()
     date_str = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1513,6 +1552,13 @@ async def run_pipeline() -> None:
     # yesterday instead — full day's coverage, nothing re-fetched.
     all_articles = merge_todays_articles(all_articles, date_str)
 
+    # ── Phase 1c: Apply configured source order ──────────────────
+    # A stable sort by the Settings source_order list; it shapes both the
+    # EPUB chapter order and the order sources appear in the LLM prompt
+    # (and therefore the radio/podcast scripts). Unlisted sources keep
+    # their scrape order, after the listed ones.
+    all_articles = apply_source_order(all_articles, config)
+
     # ── Phase 2: Curate ──────────────────────────────────────────
     all_articles = curate_audio_highlights(all_articles)
 
@@ -1526,7 +1572,7 @@ async def run_pipeline() -> None:
     long_podcast = extract_xml_block(responses["podcast"], "long_podcast") if "podcast" in responses else ""
 
     # ── Phase 5: Build EPUBs (full edition + TLDR digest) ────────
-    build_epub(all_articles, date_str)
+    build_epub_variants(all_articles, date_str)
     if "tldr" in responses:
         build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
 
@@ -1657,6 +1703,10 @@ async def run_regen_audio(date_str: str) -> None:
 
     log.info("Loaded %d articles for regen", len(all_articles))
 
+    # Same source ordering as the daily pipeline, so a rebuilt EPUB or track
+    # reflects the current Settings order
+    all_articles = apply_source_order(all_articles, load_json(CONFIG_PATH, {}))
+
     # REGEN_TRACK picks what to regenerate:
     #   radio | podcast → that audio track only (one script, other MP3 untouched)
     #   epub            → rebuild the daily EPUB from saved articles (NO LLM call)
@@ -1665,7 +1715,7 @@ async def run_regen_audio(date_str: str) -> None:
     regen_track = os.getenv("REGEN_TRACK", "").strip().lower()
 
     if regen_track == "epub":
-        build_epub(all_articles, date_str)
+        build_epub_variants(all_articles, date_str)
         log.info("══════════════════════════════════════════════════")
         log.info("  EPUB rebuild complete — %s (no LLM call needed)", date_str)
         log.info("══════════════════════════════════════════════════")

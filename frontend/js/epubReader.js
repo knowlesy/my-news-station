@@ -2,7 +2,6 @@
 // Two independent reader instances built from one factory: the full
 // daily-news EPUB on top, and the companion TLDR digest below it.
 import { $, toast, formatDate } from './utils.js';
-import { updateSendButton } from './crosspoint.js';
 
 // ── Shared: Catppuccin theme injected into the epub.js iframe ────
 function injectEpubStyles(rendition) {
@@ -96,7 +95,6 @@ function createReader(cfg) {
         </div>`;
       subtitle.textContent = `No ${cfg.label.toLowerCase()} for this edition`;
       downloadBtn.style.display = 'none';
-      if (cfg.isMain) $('sendToX4Btn').style.display = 'none';
       return;
     }
 
@@ -135,7 +133,6 @@ function createReader(cfg) {
       downloadBtn.href = epubUrl;
       downloadBtn.download = filename;
       downloadBtn.style.display = 'inline-flex';
-      if (cfg.isMain) updateSendButton();
 
       // Hook into rendition relocations to track chapter
       rendition.on('relocated', location => {

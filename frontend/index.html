@@ -785,18 +785,14 @@
           </div>
         </div>
 
-        <!-- Crosspoint X4 Devices -->
+        <!-- Source ordering (EPUB chapters + audio script order) -->
         <div>
-          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">CROSSPOINT X4 DEVICES</div>
-          <div id="crosspointDeviceList" style="display:flex; flex-direction:column; gap:0.4rem; margin-bottom:0.5rem;"></div>
-          <div style="display:flex; gap:0.5rem; align-items:center;">
-            <input type="text" id="newDeviceName" placeholder="Device name" style="flex:1; height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none;">
-            <input type="text" id="newDeviceIp" placeholder="IP address (e.g. 192.168.3.3)" style="flex:2; height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none; font-family:monospace;">
-            <button id="addDeviceBtn" class="btn" style="height:32px; background:var(--ctp-blue); color:var(--ctp-base); font-size:0.75rem; white-space:nowrap;">+ Add</button>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">SOURCE ORDER (EPUB &amp; AUDIO)</div>
+          <div id="sourceOrderContainer" style="background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.5rem; max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:0.15rem;">
+            <!-- Rendered dynamically -->
           </div>
           <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.35rem; line-height:1.4;">
-            ⓘ Requires <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener" style="color:var(--ctp-blue);">CrossPoint firmware</a> with the device joined to this network.
-            Stock-firmware X4s only listen on their own WiFi hotspot, which the server cannot reach — their light will stay 🔴.
+            ⓘ Sets which source comes first in the EPUB chapters and the radio/podcast scripts. Takes effect on the next run or EPUB rebuild.
           </div>
         </div>
 
@@ -863,7 +859,7 @@
               <li>Enter the catalog URL above — leave username/password empty (no auth)</li>
               <li>Open the catalog: newest editions are listed first; pick one to download it straight to the device</li>
             </ol>
-            <div style="margin-top:0.35rem;">Also works in KOReader, Calibre, Moon+ Reader, or any OPDS 1.2 client. Once pulling is proven, the push-based "Send to X4" above can be retired.</div>
+            <div style="margin-top:0.35rem;">Also works in KOReader, Calibre, Moon+ Reader, or any OPDS 1.2 client. The catalog serves an image-free edition sized for e-ink; the dashboard download keeps images.</div>
           </div>
         </div>
 
@@ -1092,7 +1088,6 @@
         </div>
         <div style="display:flex; align-items:center; gap:0.5rem;">
           <button id="regenBtn-epub" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" title="Rebuild this EPUB from saved articles — no AI call" aria-label="Rebuild EPUB">🔁 Rebuild</button>
-          <button id="sendToX4Btn" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" aria-label="Send EPUB to Crosspoint X4">📤 Send to X4</button>
           <div class="epub-nav-controls" role="navigation" aria-label="Chapter navigation">
             <button id="prevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous chapter">‹</button>
             <span   class="chapter-indicator" id="chapterIndicator" aria-live="polite">—</span>

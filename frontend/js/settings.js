@@ -4,10 +4,6 @@
 // `currentConfig`); only cosmetic prefs (theme) and the clicked-editions
 // list stay in localStorage.
 import { $, toast } from './utils.js';
-import {
-  syncFromConfig, getDeviceSaveState, renderCrosspointDevices,
-  updateSendButton, loadSentHistory,
-} from './crosspoint.js';
 
 // ── Theme ────────────────────────────────────────────────────────
 const themeSelect = $('themeSelect');
@@ -168,9 +164,6 @@ export async function fetchAndRenderConfig() {
     renderSourceCheckboxes('short', sources);
     renderSourceCheckboxes('long', sources);
 
-    syncFromConfig(currentConfig);
-    updateSendButton();
-
     loadSettings();
   } catch (err) {
     console.error('Error fetching config:', err);
@@ -320,6 +313,71 @@ function renderSourceHealth() {
   });
 }
 
+// ── Source ordering (EPUB chapters + audio script order) ────────
+// Working copy of the order while the modal is open; saved on Save.
+let sourceOrderDraft = [];
+
+function allConfiguredSources() {
+  return [
+    ...currentConfig.rss_feeds.map(f => typeof f === 'string' ? f : f.name),
+    ...currentConfig.medium_tags.map(t => `Medium/tags/${t}`),
+  ];
+}
+
+// Called on modal open: seed the draft from config — saved order first
+// (dropping sources that no longer exist), then any new sources appended
+// in their natural order
+function renderSourceOrder() {
+  const all = allConfiguredSources();
+  const saved = (currentConfig.source_order || []).filter(s => all.includes(s));
+  sourceOrderDraft = [...saved, ...all.filter(s => !saved.includes(s))];
+  renderSourceOrderRows();
+}
+
+function renderSourceOrderRows() {
+  const container = $('sourceOrderContainer');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (sourceOrderDraft.length === 0) {
+    container.innerHTML = '<div style="color:var(--ctp-subtext0); font-style:italic; font-size:0.75rem;">No sources configured</div>';
+    return;
+  }
+
+  const btnStyle = 'background:var(--ctp-surface0); border:none; color:var(--ctp-text); border-radius:4px; width:22px; height:20px; cursor:pointer; font-size:0.7rem; line-height:1;';
+
+  sourceOrderDraft.forEach((src, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:0.4rem; font-size:0.75rem; border-bottom:1px solid var(--ctp-surface0); padding:0.15rem 0;';
+
+    const upBtn = document.createElement('button');
+    upBtn.textContent = '↑';
+    upBtn.style.cssText = btnStyle;
+    upBtn.disabled = i === 0;
+    upBtn.addEventListener('click', () => {
+      [sourceOrderDraft[i - 1], sourceOrderDraft[i]] = [sourceOrderDraft[i], sourceOrderDraft[i - 1]];
+      renderSourceOrderRows();
+    });
+
+    const downBtn = document.createElement('button');
+    downBtn.textContent = '↓';
+    downBtn.style.cssText = btnStyle;
+    downBtn.disabled = i === sourceOrderDraft.length - 1;
+    downBtn.addEventListener('click', () => {
+      [sourceOrderDraft[i], sourceOrderDraft[i + 1]] = [sourceOrderDraft[i + 1], sourceOrderDraft[i]];
+      renderSourceOrderRows();
+    });
+
+    const label = document.createElement('span');
+    label.textContent = `${i + 1}. ${src}`;
+    label.style.cssText = 'color:var(--ctp-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;';
+    label.title = src;
+
+    row.append(upBtn, downBtn, label);
+    container.appendChild(row);
+  });
+}
+
 async function loadVersionDisplay() {
   const el = $('versionDisplay');
   if (!el) return;
@@ -355,8 +413,7 @@ function toggleOptionsModal() {
     const runMin = currentConfig.daily_run_minute ?? 0;
     $('dailyRunTimeInput').value = `${String(runHour).padStart(2, '0')}:${String(runMin).padStart(2, '0')}`;
     renderSourceHealth();
-    syncFromConfig(currentConfig);
-    renderCrosspointDevices();
+    renderSourceOrder();
     loadVersionDisplay();
     optionsModal.style.display = 'flex';
   } else {
@@ -431,11 +488,11 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       llm_podcast: $('llmPodcastSelect').value || null,
       llm_tldr: $('llmTldrSelect').value || null,
       source_health_dead_days: parseInt($('sourceHealthDeadDaysInput').value, 10) || 30,
+      source_order: sourceOrderDraft,
       ...(() => {
         const [h, m] = $('dailyRunTimeInput').value.split(':').map(Number);
         return { daily_run_hour: h ?? 6, daily_run_minute: m ?? 0 };
       })(),
-      ...getDeviceSaveState(),
     });
 
     toast('Configuration saved successfully', 'success');
@@ -447,6 +504,3 @@ $('saveOptionsBtn').addEventListener('click', async () => {
     toast('Failed to save configuration to server.', 'error');
   }
 });
-
-// Fetch the send history once at startup so the send button state is accurate
-loadSentHistory();

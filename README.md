@@ -21,7 +21,7 @@ Every morning, the pipeline reads your sources so you don't have to, and produce
 
 And the station around them:
 
-- 📚 **OPDS catalog** — e-readers pull editions themselves (CrossPoint/X4, KOReader, Calibre, Moon+ Reader). Toggleable in Settings.
+- 📚 **OPDS catalog** — e-readers pull editions themselves (CrossPoint/X4, KOReader, Calibre, Moon+ Reader). Serves an image-free edition sized for e-ink; the dashboard download keeps images. Toggleable in Settings.
 - 🤖 **Pluggable LLMs, per output** — run the briefing on Gemini and the podcast on Claude, or switch any output off entirely. Outputs sharing a backend share a single LLM call to keep token costs down.
 - 🔁 **Surgical regeneration** — rebuild just the radio, just the podcast, just the TLDR, or the EPUB itself (no LLM call at all). No paying for everything to fix one thing.
 - 🔒 **Paywall detection** — truncated "sign up to read more" articles are detected and skipped (on by default).
@@ -91,12 +91,14 @@ Everything else lives in the dashboard's Settings modal and persists server-side
 
 - **Sources** — RSS feeds, Medium tags (`medium/tags/terraform`), Medium profiles/publications (`@username`), and Substack links (auto-resolved to their feed)
 - **Per-briefing source selection** — choose which sources feed the radio vs. the podcast
+- **Source order** — set which source comes first in the EPUB chapters and audio scripts
+- **Daily run time** — when the built-in scheduler fires the pipeline (UTC)
 - **AI & Outputs** — enable/disable each output; pick an LLM backend per output
 - **Voices** — per-track neural voice with instant preview
 - **Show structure & personality** — the system prompt is yours to edit: make the presenter dry, chatty, or ruthless
 - **OPDS catalog** — on/off toggle plus the setup instructions for your install
 - **Paywalled posts** — skip truncated articles (default on)
-- **Source health** — activity per source, with one-click silencing
+- **Source health** — activity per source with one-click silencing; the inactive-days threshold for flagging a source dead is configurable
 
 ---
 

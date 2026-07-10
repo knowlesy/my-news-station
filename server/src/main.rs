@@ -69,23 +69,17 @@ struct RssFeed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CrosspointDevice {
-    name: String,
-    ip: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
     rss_feeds: Vec<RssFeed>,
     medium_tags: Vec<String>,
     #[serde(default)]
     silenced_sources: Vec<String>,
+    /// Presentation order for sources in the EPUB chapters and audio scripts;
+    /// unlisted sources follow in scrape order. Consumed by the scraper.
+    #[serde(default)]
+    source_order: Vec<String>,
     #[serde(default)]
     system_prompt: Option<String>,
-    #[serde(default)]
-    crosspoint_devices: Vec<CrosspointDevice>,
-    #[serde(default)]
-    default_crosspoint_ip: Option<String>,
     // Voice + per-briefing source selection (previously browser localStorage;
     // stored here so settings are global rather than per-browser)
     #[serde(default)]
@@ -231,9 +225,8 @@ impl Default for AppConfig {
             ],
             medium_tags: vec!["terraform".to_string()],
             silenced_sources: Vec::new(),
+            source_order: Vec::new(),
             system_prompt: None,
-            crosspoint_devices: Vec::new(),
-            default_crosspoint_ip: None,
             voice_short: None,
             voice_long: None,
             sources_short: Vec::new(),
@@ -307,7 +300,11 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
         });
 
         if file_name.starts_with("daily-news-") && file_name.ends_with(".epub") {
-            media.epub = Some(file_name);
+            // The -x4 variant (images stripped) is OPDS-only; the dashboard
+            // download always gets the full edition
+            if !file_name.ends_with("-x4.epub") {
+                media.epub = Some(file_name);
+            }
         } else if file_name.starts_with("daily-tldr-") && file_name.ends_with(".epub") {
             media.tldr = Some(file_name);
         } else if file_name.starts_with("short-radio-") && file_name.ends_with(".mp3") {
@@ -403,6 +400,15 @@ async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse,
             books.push((file_name, mtime));
         }
     }
+    // E-readers are offline: prefer the -x4 variant (images stripped) and
+    // hide the full edition when its -x4 twin exists. Editions predating the
+    // variant split still appear as themselves.
+    let names: std::collections::HashSet<String> =
+        books.iter().map(|(n, _)| n.clone()).collect();
+    books.retain(|(n, _)| {
+        n.ends_with("-x4.epub")
+            || !names.contains(&n.replace(".epub", "-x4.epub"))
+    });
     books.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
 
     let feed_updated = books
@@ -427,12 +433,14 @@ async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse,
             }
             None => file_name.clone(),
         };
+        // No per-entry <author>: CrossPoint names downloads
+        // "{author} - {title}.epub", so an author string just bloats the
+        // filename. The feed-level <author> below keeps the Atom feed valid.
         entries.push_str(&format!(
             r#"  <entry>
     <id>urn:my-news-station:{id}</id>
     <title>{title}</title>
     <updated>{updated}</updated>
-    <author><name>AI News Station</name></author>
     <link rel="http://opds-spec.org/acquisition" href="/media/{href}" type="application/epub+zip"/>
   </entry>
 "#,
@@ -846,213 +854,6 @@ async fn handle_tts_preview(
 
 
 // ═══════════════════════════════════════════════════════════════════
-// CROSSPOINT DEVICE API
-// ═══════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Deserialize)]
-struct ProbeParams {
-    ip: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ProbeResponse {
-    status: String,   // "online_crosspoint" | "online_stock" | "offline"
-    firmware: Option<String>,
-}
-
-/// `GET /api/crosspoint/probe?ip=X` — probe whether an X4 device is reachable.
-/// Tries CrossPoint firmware first (/api/status), then stock (/list?dir=/).
-async fn handle_crosspoint_probe(
-    axum::extract::Query(params): axum::extract::Query<ProbeParams>,
-) -> Json<ProbeResponse> {
-    // Sanitise: only allow IPs / hostnames with safe chars
-    let ip = &params.ip;
-    if !ip.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_') {
-        return Json(ProbeResponse { status: "offline".into(), firmware: None });
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-        .unwrap_or_default();
-
-    // CrossPoint firmware
-    if let Ok(resp) = client.get(format!("http://{}/api/status", ip)).send().await {
-        if resp.status().is_success() {
-            return Json(ProbeResponse {
-                status: "online_crosspoint".into(),
-                firmware: Some("crosspoint".into()),
-            });
-        }
-    }
-
-    // Stock firmware
-    if let Ok(resp) = client.get(format!("http://{}/list?dir=/", ip)).send().await {
-        if resp.status().is_success() {
-            return Json(ProbeResponse {
-                status: "online_stock".into(),
-                firmware: Some("stock".into()),
-            });
-        }
-    }
-
-    Json(ProbeResponse { status: "offline".into(), firmware: None })
-}
-
-#[derive(Debug, Deserialize)]
-struct SendPayload {
-    ip: String,
-    firmware: String,  // "crosspoint" | "stock"
-    date: String,      // YYYYMMDD
-}
-
-#[derive(Debug, Serialize)]
-struct SendResponse {
-    success: bool,
-    message: String,
-    already_sent: bool,
-}
-
-/// `POST /api/crosspoint/send` — read the EPUB for `date` and push it to the X4.
-async fn handle_crosspoint_send(
-    State(state): State<AppState>,
-    Json(payload): Json<SendPayload>,
-) -> Json<SendResponse> {
-    let ip = &payload.ip;
-    if !ip.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_') {
-        return Json(SendResponse { success: false, message: "Invalid device IP".into(), already_sent: false });
-    }
-
-    // Locate the EPUB for the requested date. The scraper writes
-    // daily-news-{YYYYMMDD-HHMMSS}.epub and the playlist group key is that
-    // embedded date, so a prefix scan finds it; pick the newest on a tie.
-    if payload.date.is_empty() || !payload.date.chars().all(|c| c.is_ascii_digit() || c == '-') {
-        return Json(SendResponse { success: false, message: "Invalid date".into(), already_sent: false });
-    }
-    let prefix = format!("daily-news-{}", payload.date);
-    let epub_path = std::fs::read_dir(&*state.data_dir)
-        .ok()
-        .and_then(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with(&prefix) && n.ends_with(".epub"))
-                        .unwrap_or(false)
-                })
-                .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
-        });
-    let Some(epub_path) = epub_path else {
-        return Json(SendResponse {
-            success: false,
-            message: format!("EPUB not found for date {}", payload.date),
-            already_sent: false,
-        });
-    };
-
-    // Check sent history
-    let history_path = state.data_dir.join("crosspoint_sent.json");
-    let mut history: serde_json::Value = if history_path.exists() {
-        std::fs::read_to_string(&history_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-
-    let history_key = format!("{}_{}", payload.date, ip);
-    if history.get(&history_key).is_some() {
-        return Json(SendResponse {
-            success: true,
-            message: "Already sent — file is on the device.".into(),
-            already_sent: true,
-        });
-    }
-
-    let epub_bytes = match std::fs::read(&epub_path) {
-        Ok(b) => b,
-        Err(e) => return Json(SendResponse {
-            success: false,
-            message: format!("Failed to read EPUB: {}", e),
-            already_sent: false,
-        }),
-    };
-
-    let filename = epub_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| format!("daily-news-{}.epub", payload.date));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_default();
-
-    let part = reqwest::multipart::Part::bytes(epub_bytes)
-        .file_name(filename.clone())
-        .mime_str("application/epub+zip")
-        .unwrap();
-
-    let upload_result = if payload.firmware == "crosspoint" {
-        let form = reqwest::multipart::Form::new().part("file", part);
-        client
-            .post(format!("http://{}/upload?path=/", ip))
-            .multipart(form)
-            .send()
-            .await
-    } else {
-        // Stock firmware
-        let form = reqwest::multipart::Form::new()
-            .part("name", reqwest::multipart::Part::text(format!("/{}", filename)))
-            .part("data", part);
-        client
-            .post(format!("http://{}/edit", ip))
-            .multipart(form)
-            .send()
-            .await
-    };
-
-    match upload_result {
-        Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 302 => {
-            // Record in sent history
-            history[&history_key] = serde_json::json!(chrono::Utc::now().to_rfc3339());
-            let _ = std::fs::write(&history_path, serde_json::to_string_pretty(&history).unwrap_or_default());
-            info!("Crosspoint: sent {} to {}", filename, ip);
-            Json(SendResponse { success: true, message: "File sent successfully.".into(), already_sent: false })
-        }
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            warn!("Crosspoint: device {} returned HTTP {}", ip, status);
-            Json(SendResponse {
-                success: false,
-                message: format!("Device returned HTTP {}", status),
-                already_sent: false,
-            })
-        }
-        Err(e) => {
-            warn!("Crosspoint: send to {} failed: {}", ip, e);
-            Json(SendResponse { success: false, message: format!("Connection failed: {}", e), already_sent: false })
-        }
-    }
-}
-
-/// `GET /api/crosspoint/history` — return sent history so the UI can check per-date state.
-async fn handle_crosspoint_history(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = state.data_dir.join("crosspoint_sent.json");
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                return Ok(Json(v));
-            }
-        }
-    }
-    Ok(Json(serde_json::json!({})))
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // BACKGROUND CLEANUP TASK
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1207,9 +1008,6 @@ async fn main() {
         .route("/api/scrape/regen-audio", post(handle_regen_audio))
         .route("/api/scrape/logs", get(handle_scrape_logs))
         .route("/api/tts/preview", get(handle_tts_preview))
-        .route("/api/crosspoint/probe", get(handle_crosspoint_probe))
-        .route("/api/crosspoint/send", post(handle_crosspoint_send))
-        .route("/api/crosspoint/history", get(handle_crosspoint_history))
         // Serve generated media (EPUB + MP3) under /media/
         .nest_service("/media", ServeDir::new(&*data_dir))
         // Serve the single-page frontend for all other routes
@@ -1275,6 +1073,7 @@ mod tests {
         let tmp = TempDir::new("media");
         for f in [
             "daily-news-20260704-060101.epub",
+            "daily-news-20260704-060101-x4.epub", // OPDS-only variant: never the dashboard epub
             "daily-tldr-20260704-060101.epub",
             "short-radio-20260704-060101.mp3",
             "long-podcast-20260704-060101.mp3",
