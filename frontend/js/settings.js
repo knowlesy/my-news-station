@@ -412,6 +412,7 @@ function toggleOptionsModal() {
     const runHour = currentConfig.daily_run_hour ?? 6;
     const runMin = currentConfig.daily_run_minute ?? 0;
     $('dailyRunTimeInput').value = `${String(runHour).padStart(2, '0')}:${String(runMin).padStart(2, '0')}`;
+    $('cleanupDaysInput').value = currentConfig.cleanup_max_age_days ?? 10;
     renderSourceHealth();
     renderSourceOrder();
     loadVersionDisplay();
@@ -488,6 +489,7 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       llm_podcast: $('llmPodcastSelect').value || null,
       llm_tldr: $('llmTldrSelect').value || null,
       source_health_dead_days: parseInt($('sourceHealthDeadDaysInput').value, 10) || 30,
+      cleanup_max_age_days: parseInt($('cleanupDaysInput').value, 10) || 10,
       source_order: sourceOrderDraft,
       ...(() => {
         const [h, m] = $('dailyRunTimeInput').value.split(':').map(Number);

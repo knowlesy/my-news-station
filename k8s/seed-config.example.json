@@ -1,0 +1,35 @@
+{
+  "_comment": "Example seed config — copy into the news-seed-config ConfigMap (see deployment.yaml). Consumed only when the data volume has no config.json yet (fresh install or PVC loss); UI edits are never overwritten. Only rss_feeds and medium_tags are required; everything else falls back to the defaults shown here.",
+
+  "rss_feeds": [
+    { "name": "BBC News", "url": "http://feeds.bbci.co.uk/news/rss.xml" },
+    { "name": "GitHub Engineering Blog", "url": "https://github.blog/feed/" },
+    { "name": "Kubernetes Blog", "url": "https://kubernetes.io/feed.xml" },
+    { "name": "Let's Do DevOps", "url": "https://letsdodevops.substack.com/feed" }
+  ],
+  "medium_tags": ["terraform"],
+
+  "silenced_sources": [],
+  "source_order": [],
+  "system_prompt": null,
+
+  "voice_short": "en-GB-SoniaNeural",
+  "voice_long": "en-US-GuyNeural",
+  "sources_short": [],
+  "sources_long": [],
+
+  "skip_paywalled_posts": true,
+  "opds_enabled": true,
+
+  "llm_radio": null,
+  "llm_podcast": null,
+  "llm_tldr": null,
+  "enable_radio": true,
+  "enable_podcast": true,
+  "enable_tldr": true,
+
+  "source_health_dead_days": 30,
+  "daily_run_hour": 6,
+  "daily_run_minute": 0,
+  "cleanup_max_age_days": 10
+}

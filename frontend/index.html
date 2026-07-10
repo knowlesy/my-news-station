@@ -776,12 +776,22 @@
           </div>
         </div>
 
-        <!-- Daily Run Time -->
+        <!-- Daily Run Time + Storage Retention -->
         <div>
-          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">DAILY RUN TIME</div>
-          <input type="time" id="dailyRunTimeInput" value="06:00" style="height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.8rem; outline:none; font-family:monospace;">
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">SCHEDULE &amp; STORAGE</div>
+          <div style="display:flex; gap:1.25rem; align-items:center; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--ctp-text);">
+              Daily run at
+              <input type="time" id="dailyRunTimeInput" value="06:00" style="height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.8rem; outline:none; font-family:monospace;">
+            </label>
+            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--ctp-text);">
+              Keep editions for
+              <input type="number" id="cleanupDaysInput" min="1" max="365" value="10" style="width:54px; height:32px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.4rem; font-size:0.8rem; outline:none; text-align:center;">
+              days
+            </label>
+          </div>
           <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.35rem; line-height:1.4;">
-            UTC. Internal scheduler fires the scraper daily at this time. In Kubernetes, update the CronJob schedule to match.
+            Run time is UTC (in Kubernetes, keep the CronJob schedule in sync). Older EPUBs/MP3s are deleted by the cleanup task — retention changes apply within 6 hours, no restart needed.
           </div>
         </div>
 

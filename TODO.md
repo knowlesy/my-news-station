@@ -1,5 +1,3 @@
  - OPDS: add optional basic-auth (username/password) if the station ever leaves the trusted home network
  - multi-user support (per-user settings, auth, per-user sources/voices) — if it becomes a thing
- - remove the send to x4 config — deprecate once OPDS pull has been tested on the device for a while
  - allow for pay wall content and how to manage that (Phase 2: auto-signin with per-site credentials)
- - configurable day storage/cleanup

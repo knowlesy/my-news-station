@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -219,8 +220,11 @@ def call_gemini(prompt: str) -> str:
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GOOGLE_AI_KEY}"
+        f"{GEMINI_MODEL}:generateContent"
     )
+    # Key goes in a header, never the URL — request URLs surface verbatim in
+    # exception tracebacks and pod logs
+    headers = {"x-goog-api-key": GOOGLE_AI_KEY}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -228,18 +232,31 @@ def call_gemini(prompt: str) -> str:
             "temperature": 0.4,
         },
     }
-    log.info("→ Calling Gemini (%s)…", GEMINI_MODEL)
-    resp = requests.post(url, json=payload, timeout=180)
-    if resp.status_code != 200:
-        log.error("Gemini API Error Response Body: %s", resp.text)
-    if resp.status_code == 404:
-        raise RuntimeError(
-            f"Gemini model '{GEMINI_MODEL}' not found (404).\n"
-            f"'gemini-1.5-pro' is deprecated — use 'gemini-2.0-flash'.\n"
-            f"Set GEMINI_MODEL=gemini-2.0-flash in your .env file."
-        )
-    resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+    # Retry transient overload here: a raise fails the whole k8s job, and the
+    # retry pod re-scrapes every article just to reach this call again
+    delays = (30, 60, 120)
+    for attempt in range(len(delays) + 1):
+        log.info("→ Calling Gemini (%s)…", GEMINI_MODEL)
+        resp = requests.post(url, json=payload, headers=headers, timeout=180)
+        if resp.status_code == 200:
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        log.error("Gemini API error %d: %s", resp.status_code, resp.text[:500])
+        if resp.status_code == 404:
+            raise RuntimeError(
+                f"Gemini model '{GEMINI_MODEL}' not found (404).\n"
+                f"'gemini-1.5-pro' is deprecated — use 'gemini-2.0-flash'.\n"
+                f"Set GEMINI_MODEL=gemini-2.0-flash in your .env file."
+            )
+        if resp.status_code in (429, 500, 503) and attempt < len(delays):
+            log.warning(
+                "Transient Gemini error %d — retrying in %ds (attempt %d/%d)",
+                resp.status_code, delays[attempt], attempt + 1, len(delays),
+            )
+            time.sleep(delays[attempt])
+            continue
+        resp.raise_for_status()
 
 
 def call_claude_api(prompt: str) -> str:

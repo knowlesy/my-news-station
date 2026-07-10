@@ -117,6 +117,10 @@ spec:
               mountPath: /app/data
             - name: claude-creds
               mountPath: /root/.claude
+            - name: seed-config
+              mountPath: /app/seed-config.json
+              subPath: seed-config.json
+              readOnly: true
 
           resources:
             requests:
@@ -148,6 +152,34 @@ spec:
         - name: claude-creds
           persistentVolumeClaim:
             claimName: claude-creds-pvc
+        - name: seed-config
+          configMap:
+            name: news-seed-config
+            optional: true   # absent ConfigMap = built-in defaults on fresh PVC
+
+---
+# ── Disaster-recovery seed config ─────────────────────────────────
+# Git-managed baseline for config.json. Only consumed when the PVC has no
+# config.json yet (fresh volume or PVC loss) — UI edits on the PVC always
+# win and are never overwritten. Keep your curated feed list here so a lost
+# PVC only costs the generated EPUBs/MP3s, not your source list.
+# Full example with every supported field: k8s/seed-config.example.json
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: news-seed-config
+  namespace: my-news
+  labels:
+    app.kubernetes.io/name:    news-seed-config
+    app.kubernetes.io/part-of: my-news
+data:
+  seed-config.json: |
+    {
+      "rss_feeds": [
+        { "name": "BBC News", "url": "http://feeds.bbci.co.uk/news/rss.xml" }
+      ],
+      "medium_tags": ["terraform"]
+    }
 
 ---
 # ── Daily Scraper CronJob ─────────────────────────────────────────
@@ -178,6 +210,11 @@ spec:
       # Retry on transient failures (network, rate limits, etc.)
       backoffLimit: 2
       activeDeadlineSeconds: 5400   # Kill after 90 minutes
+
+      # Auto-delete finished jobs (and their pods) after 24h so failed
+      # attempts don't linger in cluster views; history limits above still
+      # cap how many exist before the TTL fires
+      ttlSecondsAfterFinished: 86400
 
       template:
         metadata:

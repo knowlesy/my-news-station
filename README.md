@@ -93,6 +93,7 @@ Everything else lives in the dashboard's Settings modal and persists server-side
 - **Per-briefing source selection** — choose which sources feed the radio vs. the podcast
 - **Source order** — set which source comes first in the EPUB chapters and audio scripts
 - **Daily run time** — when the built-in scheduler fires the pipeline (UTC)
+- **Storage retention** — how many days of editions to keep before cleanup (default 10)
 - **AI & Outputs** — enable/disable each output; pick an LLM backend per output
 - **Voices** — per-track neural voice with instant preview
 - **Show structure & personality** — the system prompt is yours to edit: make the presenter dry, chatty, or ruthless

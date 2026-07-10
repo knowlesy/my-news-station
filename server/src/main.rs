@@ -119,6 +119,9 @@ struct AppConfig {
     /// Minute (0–59) at which the internal daily scheduler fires the scraper.
     #[serde(default)]
     daily_run_minute: u8,
+    /// Days generated media is kept before the cleanup task deletes it.
+    #[serde(default = "default_cleanup_max_age_days")]
+    cleanup_max_age_days: u32,
 }
 
 fn default_true() -> bool {
@@ -139,6 +142,10 @@ fn default_source_health_dead_days() -> u32 {
 
 fn default_daily_run_hour() -> u8 {
     6
+}
+
+fn default_cleanup_max_age_days() -> u32 {
+    10
 }
 
 /// Read config.json from disk, returning defaults on any error.
@@ -242,6 +249,7 @@ impl Default for AppConfig {
             source_health_dead_days: 30,
             daily_run_hour: 6,
             daily_run_minute: 0,
+            cleanup_max_age_days: 10,
         }
     }
 }
@@ -924,15 +932,16 @@ async fn daily_scheduler_loop(state: AppState) {
     }
 }
 
-/// Infinite loop that fires the cleanup task every 6 hours.
+/// Infinite loop that fires the cleanup task every 6 hours. Retention is
+/// read from config each cycle so a Settings change applies without restart.
 async fn cleanup_loop(data_dir: Arc<PathBuf>) {
     // Run once immediately on startup so stale files from a previous run are cleared.
-    cleanup_old_files(&data_dir, 10).await;
+    cleanup_old_files(&data_dir, load_app_config(&data_dir).cleanup_max_age_days as i64).await;
 
     let mut interval = time::interval(time::Duration::from_secs(6 * 60 * 60)); // 6 hours
     loop {
         interval.tick().await;
-        cleanup_old_files(&data_dir, 10).await;
+        cleanup_old_files(&data_dir, load_app_config(&data_dir).cleanup_max_age_days as i64).await;
     }
 }
 
@@ -970,14 +979,38 @@ async fn main() {
 
     // Single source of truth for default sources: materialise config.json on
     // first boot. The scraper has no embedded defaults and reads this file.
+    //
+    // Disaster-recovery seed: if SEED_CONFIG (default /app/seed-config.json,
+    // typically a git-managed ConfigMap mount) exists and parses as a valid
+    // AppConfig, a fresh PVC starts from it instead of the built-in defaults.
+    // An existing config.json always wins — UI edits are never overwritten.
     let config_path = data_dir.join("config.json");
     if !config_path.exists() {
-        match serde_json::to_string_pretty(&AppConfig::default()) {
-            Ok(json) => match std::fs::write(&config_path, json) {
-                Ok(_) => info!("Wrote default config.json → {:?}", config_path),
-                Err(e) => error!("Failed to write default config.json: {}", e),
-            },
-            Err(e) => error!("Failed to serialise default config: {}", e),
+        let seed_path = PathBuf::from(
+            std::env::var("SEED_CONFIG").unwrap_or_else(|_| "/app/seed-config.json".to_string()),
+        );
+        let seed = std::fs::read_to_string(&seed_path).ok().filter(|s| {
+            match serde_json::from_str::<AppConfig>(s) {
+                Ok(_) => true,
+                Err(e) => {
+                    warn!("Seed config {:?} is invalid — ignoring it: {}", seed_path, e);
+                    false
+                }
+            }
+        });
+        if let Some(seed_json) = seed {
+            match std::fs::write(&config_path, &seed_json) {
+                Ok(_) => info!("Seeded config.json from {:?}", seed_path),
+                Err(e) => error!("Failed to write seeded config.json: {}", e),
+            }
+        } else {
+            match serde_json::to_string_pretty(&AppConfig::default()) {
+                Ok(json) => match std::fs::write(&config_path, json) {
+                    Ok(_) => info!("Wrote default config.json → {:?}", config_path),
+                    Err(e) => error!("Failed to write default config.json: {}", e),
+                },
+                Err(e) => error!("Failed to serialise default config: {}", e),
+            }
         }
     }
 
