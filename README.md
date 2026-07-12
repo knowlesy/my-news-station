@@ -25,12 +25,13 @@ And the station around them:
 - 🤖 **Pluggable LLMs, per output** — run the briefing on Gemini and the podcast on Claude, or switch any output off entirely. Outputs sharing a backend share a single LLM call to keep token costs down.
 - 🔁 **Surgical regeneration** — rebuild just the radio, just the podcast, just the TLDR, or the EPUB itself (no LLM call at all). No paying for everything to fix one thing.
 - 🔒 **Paywall detection** — truncated "sign up to read more" articles are detected and skipped (on by default).
-- 🧭 **Source health tracking** — see which feeds are active, degraded, or dead; silence the noisy ones.
+- 📱 **Scan-to-phone QR codes** — every article page in the EPUB carries a small embedded QR of the original URL, so you can jump from e-ink to your phone in one scan. Generated locally at build time — no AI, no network.
+- 🧭 **Source health tracking** — see which feeds are active, degraded, or dead; silence the noisy ones. Inactive-days threshold is configurable.
 - 🗞️ **Smart re-runs** — a same-day re-run diffs against *yesterday*, not the last run: nothing missed, nothing re-fetched, tokens saved via a persistent URL registry.
 - 🎙️ **Voice picker with live TTS preview** — separate voices for briefing and podcast, previewed in one click.
 - 🖥️ **Catppuccin dashboard** — dual EPUB readers, audio players, live scraper console, new-edition badges, four theme flavours.
 - 🏷️ **Release automation** — every push tags a release; the dashboard shows exactly which build your server is running.
-- 🧹 **Self-cleaning storage** — media older than 10 days is removed automatically so volumes never fill up.
+- 🧹 **Self-cleaning storage** — media older than your configured retention (default 10 days) is removed automatically so volumes never fill up.
 
 ![EPUB Reader Code Block](assets/screenshot-code-block.png)
 
@@ -119,6 +120,13 @@ kubectl create secret generic news-secrets \
   --from-literal=LLM_BACKEND=gemini \
   --from-literal=GOOGLE_AI_KEY="your-google-ai-key"
 ```
+
+**Disaster-recovery seed:** keep your curated feed list in the `news-seed-config`
+ConfigMap (see `k8s/deployment.yaml`; full field reference in
+[`k8s/seed-config.example.json`](k8s/seed-config.example.json)). On a fresh data
+volume the server materialises `config.json` from it — so losing the PVC only
+costs the generated EPUBs/MP3s, never your source list. An existing `config.json`
+always wins; UI edits are never overwritten.
 
 ---
 

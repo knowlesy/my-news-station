@@ -23,6 +23,8 @@ scikit-learn>=1.5.0
 
 # ── EPUB generation ──────────────────────────────────────────────
 ebooklib>=0.20
+# QR codes for per-article "open on phone" links (pure Python, no Pillow)
+segno>=1.6.0
 
 # ── Text-to-speech ───────────────────────────────────────────────
 edge-tts>=7.2.8

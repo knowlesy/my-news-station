@@ -1143,6 +1143,10 @@ p {
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+img.qr {
+    float: right;
+    margin: 0 0 0.5em 0.75em;
+}
 a { color: #89b4fa; }
 """
 
@@ -1169,6 +1173,23 @@ p {
 }
 strong { font-size: 0.95em; }
 """
+
+
+def make_qr_png(url: str) -> bytes | None:
+    """
+    Small 1-bit PNG QR code for an article URL — scanned from the e-reader
+    screen to open the article on a phone. Generated locally (segno, no
+    network/AI); returns None if generation fails so the EPUB never breaks.
+    """
+    try:
+        import io
+        import segno
+        buf = io.BytesIO()
+        segno.make(url, error="l").save(buf, kind="png", scale=3, border=2)
+        return buf.getvalue()
+    except Exception as exc:
+        log.warning("QR generation failed for %s: %s", url, exc)
+        return None
 
 
 def build_epub(
@@ -1244,6 +1265,24 @@ def build_epub(
             url_link = f' · <a href="{_esc(article_url)}">Original Article</a>' if article_url else ""
             source_tag = f'<div class="source-tag">Source: {_esc(source)}{author_suffix}{url_link}</div>'
 
+            # Embedded QR of the article URL (works offline, unlike remote
+            # images) — scan from the e-ink screen to open on a phone
+            qr_html = ""
+            if article_url:
+                qr_bytes = make_qr_png(article_url)
+                if qr_bytes:
+                    qr_item = epub.EpubItem(
+                        uid=f"qr-{chapter_index:03d}",
+                        file_name=f"images/qr_{chapter_index:03d}.png",
+                        media_type="image/png",
+                        content=qr_bytes,
+                    )
+                    book.add_item(qr_item)
+                    qr_html = (
+                        f'<img class="qr" src="../images/qr_{chapter_index:03d}.png" '
+                        f'alt="Scan to open on phone" width="84" height="84"/>'
+                    )
+
             image_html = ""
             if include_images:
                 for img_url in article.get("images", []):
@@ -1261,6 +1300,7 @@ def build_epub(
                 f'  <link rel="stylesheet" type="text/css" href="../style/main.css"/>'
                 f'</head>'
                 f'<body>'
+                f'  {qr_html}'
                 f'  {source_tag}'
                 f'  <h2>{safe_title}</h2>'
                 f'  {image_html}'
