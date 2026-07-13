@@ -1089,6 +1089,7 @@ body {
     margin: 0.5em 0.7em;
     color: #1a1a2e;
     background: #fafafa;
+    text-align: left;
 }
 pre {
     background-color: #f6f8fa;
@@ -1146,6 +1147,7 @@ p {
 img.qr {
     float: right;
     margin: 0 0 0.5em 0.75em;
+    max-width: 35%;
 }
 a { color: #89b4fa; }
 """
@@ -1185,7 +1187,9 @@ def make_qr_png(url: str) -> bytes | None:
         import io
         import segno
         buf = io.BytesIO()
-        segno.make(url, error="l").save(buf, kind="png", scale=3, border=2)
+        # scale=8: at 300 DPI each module is ~0.7mm — large enough to scan on e-ink
+        # border=4: quiet zone keeps modules from bleeding into surrounding text
+        segno.make(url, error="l").save(buf, kind="png", scale=8, border=4)
         return buf.getvalue()
     except Exception as exc:
         log.warning("QR generation failed for %s: %s", url, exc)
