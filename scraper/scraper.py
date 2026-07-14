@@ -1146,8 +1146,7 @@ p {
 }
 img.qr {
     float: right;
-    margin: 0 0 0.5em 0.75em;
-    max-width: 35%;
+    margin: 0 0 0.4em 0.5em;
 }
 a { color: #89b4fa; }
 """
@@ -1177,20 +1176,39 @@ strong { font-size: 0.95em; }
 """
 
 
-def make_qr_png(url: str) -> bytes | None:
+def make_qr_png(url: str, scale: int = 8, border: int = 4) -> bytes | None:
     """
-    Small 1-bit PNG QR code for an article URL — scanned from the e-reader
-    screen to open the article on a phone. Generated locally (segno, no
-    network/AI); returns None if generation fails so the EPUB never breaks.
+    8-bit grayscale PNG QR code — universally supported by EPUB renderers.
+    Segno's default 1-bit PNG breaks on e-ink firmware; this encodes the same
+    matrix as 8-bit (0=black, 255=white) using only stdlib zlib + struct.
     """
     try:
-        import io
+        import struct, zlib
         import segno
-        buf = io.BytesIO()
-        # scale=8: at 300 DPI each module is ~0.7mm — large enough to scan on e-ink
-        # border=4: quiet zone keeps modules from bleeding into surrounding text
-        segno.make(url, error="l").save(buf, kind="png", scale=8, border=4)
-        return buf.getvalue()
+
+        matrix = segno.make(url, error="l").matrix
+        size = len(matrix)
+        w = h = (size + 2 * border) * scale
+
+        raw = bytearray()
+        for row in range(h):
+            raw.append(0)  # PNG filter type: None
+            my = row // scale - border
+            for col in range(w):
+                mx = col // scale - border
+                dark = (0 <= my < size and 0 <= mx < size and matrix[my][mx])
+                raw.append(0 if dark else 255)
+
+        def chunk(tag: bytes, data: bytes) -> bytes:
+            body = tag + data
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+            + chunk(b"IEND", b"")
+        )
     except Exception as exc:
         log.warning("QR generation failed for %s: %s", url, exc)
         return None
@@ -1283,8 +1301,8 @@ def build_epub(
                     )
                     book.add_item(qr_item)
                     qr_html = (
-                        f'<img class="qr" src="../images/qr_{chapter_index:03d}.png" '
-                        f'alt="Scan to open on phone" width="84" height="84"/>'
+                        f'<img class="qr" align="right" width="90" height="90"'
+                        f' src="../images/qr_{chapter_index:03d}.png" alt="QR"/>'
                     )
 
             image_html = ""
