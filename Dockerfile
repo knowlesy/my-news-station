@@ -36,15 +36,17 @@ RUN touch src/main.rs && cargo build --release
 
 # ── Stage 2: Runtime image ───────────────────────────────────────────────────
 # microsoft/playwright/python ships:
-#   • Ubuntu Jammy (22.04)
-#   • Python 3.10  ← jammy's apt python3; NOT 3.11. Any dependency floor
-#                    in requirements.txt must still resolve on 3.10, even
-#                    though local dev runs 3.14 (e.g. scikit-learn 1.8+
-#                    requires >=3.11 and cannot be used until this base
-#                    image moves to noble).
+#   • Ubuntu Noble (24.04)
+#   • Python 3.12  ← the apt python3. Every dependency floor in
+#                    requirements.txt must resolve on this version;
+#                    local dev runs 3.14, so the two are not the same.
+#                    (Was jammy/3.10, which capped scikit-learn at 1.7.x.)
 #   • Node.js 18
 #   • Chromium + all system dependencies
-FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy
+#
+# The image removes /usr/lib/python3.12/EXTERNALLY-MANAGED, so PEP 668
+# does not block `pip install` into the system interpreter below.
+FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
 
 # Build identity — passed via --build-arg from CI, surfaced at /api/version
 ARG GIT_SHA=dev
@@ -62,7 +64,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     libgbm1 \
-    libasound2 \
+    # Ubuntu 24.04's 64-bit time_t transition renamed this; the old name is
+    # now a virtual package with no install candidate and fails the build.
+    libasound2t64 \
     # Misc utilities
     curl \
     ca-certificates \

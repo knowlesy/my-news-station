@@ -19,7 +19,7 @@ lxml>=6.1.1
 requests>=2.32.0
 
 # ── NLP / curation ───────────────────────────────────────────────
-scikit-learn>=1.5.0
+scikit-learn>=1.9.0
 
 # ── EPUB generation ──────────────────────────────────────────────
 ebooklib>=0.20
