@@ -1,0 +1,69 @@
+name: CI
+
+# The image build is quarterly, so without this nothing validated a pull
+# request — a dependency bump could sit merged for months and only break at
+# the next scheduled build. These jobs are the fast subset that catches it.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust build & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Build
+        run: cargo build --manifest-path server/Cargo.toml --locked
+
+      - name: Test
+        run: cargo test --manifest-path server/Cargo.toml --locked
+
+  python-deps:
+    name: Python deps resolve on the image's interpreter
+    runs-on: ubuntu-latest
+    # Must match the python3 in the Dockerfile's runtime base image
+    # (mcr.microsoft.com/playwright/python:*-noble → Ubuntu 24.04 → 3.12).
+    # Local dev runs a newer Python, so resolving there proves nothing:
+    # a floor can be satisfiable on 3.14 and unsatisfiable in the image.
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve requirements without installing
+        run: |
+          pip install --upgrade pip
+          pip install --dry-run --no-cache-dir -r scraper/requirements.txt
+
+  docker:
+    name: Image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only — no registry push. Catches base-image drift such as the
+      # Ubuntu 24.04 t64 package renames, which no other job would see.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
