@@ -37,7 +37,11 @@ RUN touch src/main.rs && cargo build --release
 # ── Stage 2: Runtime image ───────────────────────────────────────────────────
 # microsoft/playwright/python ships:
 #   • Ubuntu Jammy (22.04)
-#   • Python 3.11
+#   • Python 3.10  ← jammy's apt python3; NOT 3.11. Any dependency floor
+#                    in requirements.txt must still resolve on 3.10, even
+#                    though local dev runs 3.14 (e.g. scikit-learn 1.8+
+#                    requires >=3.11 and cannot be used until this base
+#                    image moves to noble).
 #   • Node.js 18
 #   • Chromium + all system dependencies
 FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy

@@ -9,7 +9,7 @@ playwright-stealth>=1.0.6
 
 # ── Content extraction ───────────────────────────────────────────
 # trafilatura 2.x has relaxed lxml requirements + Python 3.14 support
-trafilatura>=2.0.0
+trafilatura>=2.2.0
 feedparser>=6.0.13
 beautifulsoup4>=4.15.0
 # lxml: let pip resolve the version compatible with trafilatura + Python 3.14
