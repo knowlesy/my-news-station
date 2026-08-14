@@ -853,6 +853,58 @@
           </div>
         </div>
 
+        <!-- ntfy push notifications -->
+        <div>
+          <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">NOTIFICATIONS (NTFY)</div>
+          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.8rem;">
+            <input type="checkbox" id="ntfyEnabledCheckbox" style="width:15px; height:15px; cursor:pointer;">
+            Send push notifications via ntfy
+          </label>
+          <div id="ntfyConfigBlock" style="margin-top:0.6rem; display:flex; flex-direction:column; gap:0.5rem;">
+            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--ctp-text);">
+              <span style="width:70px; flex-shrink:0;">Server</span>
+              <input type="text" id="ntfyServerInput" placeholder="https://ntfy.sh" style="flex:1; height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none; font-family:monospace;">
+            </label>
+            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--ctp-text);">
+              <span style="width:70px; flex-shrink:0;">Topic</span>
+              <input type="text" id="ntfyTopicInput" placeholder="my-news-alerts" style="flex:1; height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none; font-family:monospace;">
+            </label>
+            <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--ctp-text);">
+              <span style="width:70px; flex-shrink:0;">Token</span>
+              <input type="password" id="ntfyTokenInput" placeholder="tk_… (optional)" style="flex:1; height:30px; background:var(--ctp-base); border:1px solid var(--ctp-surface0); color:var(--ctp-text); border-radius:6px; padding:0 0.5rem; font-size:0.75rem; outline:none; font-family:monospace;">
+              <button id="ntfyTestBtn" class="btn" type="button" style="background:var(--ctp-surface0); color:var(--ctp-text); height:30px; font-size:0.72rem; padding:0 0.7rem; white-space:nowrap;">Send test</button>
+            </label>
+
+            <div style="display:flex; flex-direction:column; gap:0.3rem; margin-top:0.2rem;">
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
+                <input type="checkbox" id="ntfyScheduledRunCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                ⏰ Scheduled daily run started
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
+                <input type="checkbox" id="ntfyManualRunCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                👆 Manual run started
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
+                <input type="checkbox" id="ntfySuccessCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                ✅ Run finished successfully
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
+                <input type="checkbox" id="ntfyFailureCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                🚨 Run failed (includes the error output)
+              </label>
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
+                <input type="checkbox" id="ntfyTokenExpiryCheckbox" style="width:15px; height:15px; cursor:pointer;">
+                🔑 API key / OAuth token rejected
+              </label>
+            </div>
+          </div>
+          <div style="font-size:0.68rem; color:var(--ctp-surface2); margin-top:0.45rem; line-height:1.4;">
+            ⓘ Install the ntfy app and subscribe to the topic above to receive alerts. On public ntfy.sh anyone
+            who guesses your topic name can read it — pick an unguessable one, or use a self-hosted server with a token.
+            Credential-rejection alerts replace the generic failure alert so you don't get both.
+          </div>
+        </div>
+
         <!-- OPDS Catalog (e-reader pull) -->
         <div>
           <div style="font-weight:600; font-size:0.75rem; color:var(--ctp-subtext0); margin-bottom:0.4rem; letter-spacing:0.05em;">OPDS CATALOG (E-READER PULL)</div>

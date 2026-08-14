@@ -393,6 +393,46 @@ async function loadVersionDisplay() {
   }
 }
 
+/** Grey out the ntfy fields when the master switch is off. */
+function syncNtfyEnabledState() {
+  const on = $('ntfyEnabledCheckbox').checked;
+  const block = $('ntfyConfigBlock');
+  block.style.opacity = on ? '1' : '0.45';
+  block.querySelectorAll('input, button').forEach(el => { el.disabled = !on; });
+}
+
+$('ntfyEnabledCheckbox').addEventListener('change', syncNtfyEnabledState);
+
+$('ntfyTestBtn').addEventListener('click', async () => {
+  const btn = $('ntfyTestBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await fetch('/api/ntfy/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh',
+        topic: $('ntfyTopicInput').value.trim(),
+        token: $('ntfyTokenInput').value.trim() || null,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast('Test notification sent — check your device', 'success');
+    } else {
+      toast(`ntfy test failed: ${data.error || 'unknown error'}`, 'error');
+    }
+  } catch (err) {
+    console.error('ntfy test failed:', err);
+    toast('Could not reach the server to send a test', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
 function toggleOptionsModal() {
   if (optionsModal.style.display === 'none' || !optionsModal.style.display) {
     const feedsUrls = currentConfig.rss_feeds.map(f => typeof f === 'string' ? f : f.url).join('\n');
@@ -413,6 +453,16 @@ function toggleOptionsModal() {
     const runMin = currentConfig.daily_run_minute ?? 0;
     $('dailyRunTimeInput').value = `${String(runHour).padStart(2, '0')}:${String(runMin).padStart(2, '0')}`;
     $('cleanupDaysInput').value = currentConfig.cleanup_max_age_days ?? 10;
+    $('ntfyEnabledCheckbox').checked = currentConfig.ntfy_enabled === true;
+    $('ntfyServerInput').value = currentConfig.ntfy_server || 'https://ntfy.sh';
+    $('ntfyTopicInput').value = currentConfig.ntfy_topic || '';
+    $('ntfyTokenInput').value = currentConfig.ntfy_token || '';
+    $('ntfyScheduledRunCheckbox').checked = currentConfig.ntfy_on_scheduled_run !== false;
+    $('ntfyManualRunCheckbox').checked = currentConfig.ntfy_on_manual_run === true;
+    $('ntfySuccessCheckbox').checked = currentConfig.ntfy_on_success !== false;
+    $('ntfyFailureCheckbox').checked = currentConfig.ntfy_on_failure !== false;
+    $('ntfyTokenExpiryCheckbox').checked = currentConfig.ntfy_on_token_expiry !== false;
+    syncNtfyEnabledState();
     renderSourceHealth();
     renderSourceOrder();
     loadVersionDisplay();
@@ -491,6 +541,15 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       source_health_dead_days: parseInt($('sourceHealthDeadDaysInput').value, 10) || 30,
       cleanup_max_age_days: parseInt($('cleanupDaysInput').value, 10) || 10,
       source_order: sourceOrderDraft,
+      ntfy_enabled: $('ntfyEnabledCheckbox').checked,
+      ntfy_server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh',
+      ntfy_topic: $('ntfyTopicInput').value.trim(),
+      ntfy_token: $('ntfyTokenInput').value.trim() || null,
+      ntfy_on_scheduled_run: $('ntfyScheduledRunCheckbox').checked,
+      ntfy_on_manual_run: $('ntfyManualRunCheckbox').checked,
+      ntfy_on_success: $('ntfySuccessCheckbox').checked,
+      ntfy_on_failure: $('ntfyFailureCheckbox').checked,
+      ntfy_on_token_expiry: $('ntfyTokenExpiryCheckbox').checked,
       ...(() => {
         const [h, m] = $('dailyRunTimeInput').value.split(':').map(Number);
         return { daily_run_hour: h ?? 6, daily_run_minute: m ?? 0 };

@@ -122,6 +122,36 @@ struct AppConfig {
     /// Days generated media is kept before the cleanup task deletes it.
     #[serde(default = "default_cleanup_max_age_days")]
     cleanup_max_age_days: u32,
+
+    // ── ntfy push notifications ──────────────────────────────────
+    /// Master switch. Off = no outbound requests are made at all.
+    #[serde(default)]
+    ntfy_enabled: bool,
+    /// Base URL of the ntfy server — ntfy.sh or a self-hosted instance.
+    #[serde(default = "default_ntfy_server")]
+    ntfy_server: String,
+    /// Topic to publish to. Anyone who knows a public topic name can read it,
+    /// so treat it as a secret on ntfy.sh unless the topic is access-controlled.
+    #[serde(default)]
+    ntfy_topic: String,
+    /// Optional bearer token (`tk_…`) for a protected topic.
+    #[serde(default)]
+    ntfy_token: Option<String>,
+    /// Notify when the internal daily scheduler fires a run.
+    #[serde(default = "default_true")]
+    ntfy_on_scheduled_run: bool,
+    /// Notify when a run is started by hand from the dashboard.
+    #[serde(default)]
+    ntfy_on_manual_run: bool,
+    /// Notify when a run finishes successfully.
+    #[serde(default = "default_true")]
+    ntfy_on_success: bool,
+    /// Notify when a run fails, including the captured error lines.
+    #[serde(default = "default_true")]
+    ntfy_on_failure: bool,
+    /// Notify when a failure looks like expired/invalid LLM credentials.
+    #[serde(default = "default_true")]
+    ntfy_on_token_expiry: bool,
 }
 
 fn default_true() -> bool {
@@ -146,6 +176,10 @@ fn default_daily_run_hour() -> u8 {
 
 fn default_cleanup_max_age_days() -> u32 {
     10
+}
+
+fn default_ntfy_server() -> String {
+    "https://ntfy.sh".to_string()
 }
 
 /// Read config.json from disk, returning defaults on any error.
@@ -250,6 +284,15 @@ impl Default for AppConfig {
             daily_run_hour: 6,
             daily_run_minute: 0,
             cleanup_max_age_days: 10,
+            ntfy_enabled: false,
+            ntfy_server: default_ntfy_server(),
+            ntfy_topic: String::new(),
+            ntfy_token: None,
+            ntfy_on_scheduled_run: true,
+            ntfy_on_manual_run: false,
+            ntfy_on_success: true,
+            ntfy_on_failure: true,
+            ntfy_on_token_expiry: true,
         }
     }
 }
@@ -597,6 +640,192 @@ struct TriggerParams {
     long_sources: Option<String>,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// NTFY PUSH NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════
+
+/// One publishable notification: ntfy maps these onto its title/priority/tags
+/// headers, which is what drives the phone's banner, icon and alert sound.
+struct NtfyMessage {
+    title: String,
+    body: String,
+    /// ntfy priority 1 (min) … 5 (max).
+    priority: u8,
+    /// ntfy tag names — emoji shortcodes render as the notification icon.
+    tags: &'static str,
+}
+
+/// Log-line fragments that mean "the LLM credentials are expired or rejected"
+/// rather than "the run broke". Matched lowercase against the run's captured
+/// output. Deliberately specific: a bare "401" also appears in scraped article
+/// text, which would misfire the credential alert on an unrelated failure.
+const TOKEN_EXPIRY_MARKERS: &[&str] = &[
+    "authentication_error",
+    "invalid x-api-key",
+    "invalid api key",
+    "api key expired",
+    "oauth token has expired",
+    "oauth token expired",
+    "token has expired",
+    "401 unauthorized",
+    "status 401",
+    "error 401",
+    "please run /login",
+    "credit balance is too low",
+    "anthropic_api_key is not set",
+    "google_ai_key is not set",
+];
+
+/// True if the run's output contains a credential-failure marker.
+fn looks_like_token_expiry(lines: &[String]) -> bool {
+    lines.iter().any(|line| {
+        let lower = line.to_lowercase();
+        TOKEN_EXPIRY_MARKERS.iter().any(|m| lower.contains(m))
+    })
+}
+
+/// Pull out the log lines worth putting in a failure notification: the stderr
+/// lines and anything logged at ERROR, capped so the push stays readable on a
+/// lock screen.
+fn failure_excerpt(lines: &[String]) -> String {
+    const MAX_LINES: usize = 12;
+    const MAX_CHARS: usize = 1500;
+
+    let interesting: Vec<&String> = lines
+        .iter()
+        .filter(|l| {
+            let lower = l.to_lowercase();
+            l.starts_with("[ERROR] ")
+                || lower.contains("[error]")
+                || lower.contains("traceback")
+                || lower.contains("error:")
+        })
+        .collect();
+
+    // Nothing matched the filters (e.g. the process died without logging) —
+    // fall back to the tail of the run, which is where the failure will be.
+    let chosen: Vec<&String> = if interesting.is_empty() {
+        lines.iter().rev().take(MAX_LINES).rev().collect()
+    } else {
+        interesting.into_iter().rev().take(MAX_LINES).rev().collect()
+    };
+
+    let mut out = chosen
+        .iter()
+        .map(|l| l.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if out.chars().count() > MAX_CHARS {
+        out = out.chars().take(MAX_CHARS).collect::<String>() + "\n…(truncated)";
+    }
+    if out.trim().is_empty() {
+        out = "(no output captured)".to_string();
+    }
+    out
+}
+
+/// POST a message to an ntfy topic. Returns the server's error text on failure
+/// so the Settings "Send test" button can show why it didn't work.
+///
+/// Never called when notifications are disabled — the caller gates on config.
+async fn ntfy_publish(
+    server: &str,
+    topic: &str,
+    token: Option<&str>,
+    msg: &NtfyMessage,
+) -> Result<(), String> {
+    let topic = topic.trim();
+    if topic.is_empty() {
+        return Err("No ntfy topic configured".to_string());
+    }
+    let url = format!("{}/{}", server.trim().trim_end_matches('/'), topic);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Cannot build HTTP client: {}", e))?;
+
+    let mut req = client
+        .post(&url)
+        .header("Title", &msg.title)
+        .header("Priority", msg.priority.to_string())
+        .header("Tags", msg.tags)
+        .body(msg.body.clone());
+
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Request to {} failed: {}", url, e))?;
+
+    if resp.status().is_success() {
+        return Ok(());
+    }
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    Err(format!(
+        "ntfy returned {}: {}",
+        status,
+        body.chars().take(300).collect::<String>()
+    ))
+}
+
+/// Publish using the saved config, logging rather than propagating failures —
+/// a dead ntfy server must never take the pipeline down with it.
+async fn notify(data_dir: &std::path::Path, msg: NtfyMessage) {
+    let cfg = load_app_config(data_dir);
+    if !cfg.ntfy_enabled {
+        return;
+    }
+    if let Err(e) = ntfy_publish(
+        &cfg.ntfy_server,
+        &cfg.ntfy_topic,
+        cfg.ntfy_token.as_deref(),
+        &msg,
+    )
+    .await
+    {
+        warn!("ntfy notification failed: {}", e);
+    }
+}
+
+/// Body of the `POST /api/ntfy/test` request. Carries the values currently in
+/// the Settings form, so the user can verify a connection before saving it.
+#[derive(Deserialize)]
+struct NtfyTestRequest {
+    server: String,
+    topic: String,
+    token: Option<String>,
+}
+
+#[derive(Serialize)]
+struct NtfyTestResponse {
+    ok: bool,
+    error: Option<String>,
+}
+
+/// `POST /api/ntfy/test` — send a one-off test notification.
+async fn handle_ntfy_test(Json(req): Json<NtfyTestRequest>) -> Json<NtfyTestResponse> {
+    let msg = NtfyMessage {
+        title: "Daily News Station".to_string(),
+        body: "Test notification — ntfy is wired up correctly.".to_string(),
+        priority: 3,
+        tags: "newspaper",
+    };
+    match ntfy_publish(&req.server, &req.topic, req.token.as_deref(), &msg).await {
+        Ok(()) => Json(NtfyTestResponse { ok: true, error: None }),
+        Err(e) => {
+            warn!("ntfy test failed: {}", e);
+            Json(NtfyTestResponse { ok: false, error: Some(e) })
+        }
+    }
+}
+
 /// Pump one child stream into the shared log ring buffer, line by line.
 fn pump_child_stream<R>(
     stream: Option<R>,
@@ -623,10 +852,24 @@ fn pump_child_stream<R>(
 /// Spawn the Python scraper as a background job with the given env vars,
 /// streaming its output into the log ring buffer and tracking success.
 ///
+/// What kicked off a scraper run. Only used to decide which ntfy "started"
+/// toggle applies — scheduled and manual runs are opt-in separately, since a
+/// manual run's result is already visible on screen.
+#[derive(Clone, Copy, PartialEq)]
+enum RunTrigger {
+    Scheduled,
+    Manual,
+}
+
 /// The caller must have already claimed the `is_scraping` flag; this function
 /// releases it when the child exits. `label` names the job in log lines
 /// ("Pipeline", "Audio regen").
-fn spawn_scraper_job(state: AppState, envs: Vec<(&'static str, String)>, label: &'static str) {
+fn spawn_scraper_job(
+    state: AppState,
+    envs: Vec<(&'static str, String)>,
+    label: &'static str,
+    trigger: RunTrigger,
+) {
     let python_bin = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
     let scraper_script =
         std::env::var("SCRAPER_SCRIPT").unwrap_or_else(|_| "scraper/scraper.py".to_string());
@@ -654,6 +897,28 @@ fn spawn_scraper_job(state: AppState, envs: Vec<(&'static str, String)>, label: 
             logs.push_back(format!("--- Starting {} ---", label));
         }
         state.last_run_success.store(true, Ordering::SeqCst);
+
+        let cfg = load_app_config(&state.data_dir);
+        let announce_start = match trigger {
+            RunTrigger::Scheduled => cfg.ntfy_on_scheduled_run,
+            RunTrigger::Manual => cfg.ntfy_on_manual_run,
+        };
+        if announce_start {
+            notify(
+                &state.data_dir,
+                NtfyMessage {
+                    title: "News run started".to_string(),
+                    body: format!(
+                        "{} started at {} UTC.",
+                        label,
+                        Utc::now().format("%Y-%m-%d %H:%M")
+                    ),
+                    priority: 2,
+                    tags: "hourglass_flowing_sand",
+                },
+            )
+            .await;
+        }
 
         match cmd.spawn() {
             Ok(mut child) => {
@@ -694,6 +959,48 @@ fn spawn_scraper_job(state: AppState, envs: Vec<(&'static str, String)>, label: 
             }
         }
 
+        // Let the stdout/stderr pump tasks drain the last few lines before the
+        // notification snapshots them — the child exiting closes the pipes but
+        // does not mean those tasks have finished writing to the ring buffer.
+        time::sleep(time::Duration::from_millis(250)).await;
+
+        let success = state.last_run_success.load(Ordering::SeqCst);
+        let cfg = load_app_config(&state.data_dir);
+        if cfg.ntfy_enabled {
+            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+            let msg = if success {
+                cfg.ntfy_on_success.then(|| NtfyMessage {
+                    title: "News run complete".to_string(),
+                    body: format!("{} finished successfully.", label),
+                    priority: 2,
+                    tags: "white_check_mark",
+                })
+            } else if looks_like_token_expiry(&lines) && cfg.ntfy_on_token_expiry {
+                // Credentials, not a code fault — worth a louder alert, since
+                // every run stays broken until someone re-authenticates.
+                Some(NtfyMessage {
+                    title: "LLM credentials rejected".to_string(),
+                    body: format!(
+                        "{} failed: the API key or OAuth token looks expired or invalid.\n\n{}",
+                        label,
+                        failure_excerpt(&lines)
+                    ),
+                    priority: 5,
+                    tags: "key,rotating_light",
+                })
+            } else {
+                cfg.ntfy_on_failure.then(|| NtfyMessage {
+                    title: "News run failed".to_string(),
+                    body: format!("{} failed.\n\n{}", label, failure_excerpt(&lines)),
+                    priority: 4,
+                    tags: "rotating_light",
+                })
+            };
+            if let Some(msg) = msg {
+                notify(&state.data_dir, msg).await;
+            }
+        }
+
         state.is_scraping.store(false, Ordering::SeqCst);
     });
 }
@@ -714,7 +1021,7 @@ async fn handle_scrape_trigger(
     if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
     if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    spawn_scraper_job(state.clone(), envs, "news scraper pipeline");
+    spawn_scraper_job(state.clone(), envs, "news scraper pipeline", RunTrigger::Manual);
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -759,7 +1066,7 @@ async fn handle_regen_audio(
     if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
     if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    spawn_scraper_job(state.clone(), envs, "audio regen");
+    spawn_scraper_job(state.clone(), envs, "audio regen", RunTrigger::Manual);
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -924,7 +1231,7 @@ async fn daily_scheduler_loop(state: AppState) {
                     "Daily scheduler: triggering scraper at {:02}:{:02} UTC",
                     config.daily_run_hour, config.daily_run_minute
                 );
-                spawn_scraper_job(state.clone(), vec![], "scheduled daily run");
+                spawn_scraper_job(state.clone(), vec![], "scheduled daily run", RunTrigger::Scheduled);
             } else {
                 info!("Daily scheduler: scraper already running at trigger time, skipping");
             }
@@ -1041,6 +1348,7 @@ async fn main() {
         .route("/api/scrape/regen-audio", post(handle_regen_audio))
         .route("/api/scrape/logs", get(handle_scrape_logs))
         .route("/api/tts/preview", get(handle_tts_preview))
+        .route("/api/ntfy/test", post(handle_ntfy_test))
         // Serve generated media (EPUB + MP3) under /media/
         .nest_service("/media", ServeDir::new(&*data_dir))
         // Serve the single-page frontend for all other routes
