@@ -129,10 +129,16 @@ EXPOSE 3000
 # The web SERVER runs continuously (serving the dashboard).
 # The SCRAPER is invoked on a schedule via Kubernetes CronJob.
 #
-# Xvfb is started first to provide a virtual display for Playwright;
-# without it, even "headless" Chromium in some K8s environments fails.
+# Xvfb provides a virtual display for Playwright; without it, even
+# "headless" Chromium in some K8s environments fails. Under
+# SCRAPE_RUNNER=k8s the server never forks Playwright — it only creates
+# Jobs — so the display is dead weight and is skipped.
 CMD ["sh", "-c", \
-     "Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX &>/dev/null & \
-      sleep 1 && \
-      echo '✓ Xvfb started on :99' && \
+     "if [ \"$SCRAPE_RUNNER\" = \"k8s\" ]; then \
+        echo '✓ SCRAPE_RUNNER=k8s — skipping Xvfb (server does not run Playwright)'; \
+      else \
+        Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX &>/dev/null & \
+        sleep 1 && \
+        echo '✓ Xvfb started on :99'; \
+      fi && \
       exec /app/server"]

@@ -185,10 +185,48 @@ fn default_ntfy_server() -> String {
 /// Read config.json from disk, returning defaults on any error.
 fn load_app_config(data_dir: &std::path::Path) -> AppConfig {
     let path = data_dir.join("config.json");
-    std::fs::read_to_string(&path)
+    let mut cfg = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    apply_ntfy_env_overrides(&mut cfg);
+    cfg
+}
+
+/// Let the environment override the ntfy connection settings from config.json.
+///
+/// The topic and token are credentials, and config.json lives on a PVC — so it
+/// cannot be managed from git and is lost with the volume. Reading them from the
+/// environment instead lets them come from a secret store (Vault via
+/// ExternalSecret) while the UI keeps owning every other setting.
+///
+/// Supplying NTFY_TOPIC also switches notifications on: an operator who injected
+/// a topic clearly wants them, and `ntfy_enabled` defaults to false, which would
+/// otherwise silently discard every message. Set NTFY_ENABLED=false to override
+/// that.
+fn apply_ntfy_env_overrides(cfg: &mut AppConfig) {
+    fn env_non_empty(key: &str) -> Option<String> {
+        std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    }
+
+    if let Some(server) = env_non_empty("NTFY_SERVER") {
+        cfg.ntfy_server = server;
+    }
+    if let Some(topic) = env_non_empty("NTFY_TOPIC") {
+        cfg.ntfy_topic = topic;
+        cfg.ntfy_enabled = true;
+    }
+    if let Some(token) = env_non_empty("NTFY_TOKEN") {
+        cfg.ntfy_token = Some(token);
+    }
+    // Explicit switch always wins, so the injected topic can be muted without
+    // tearing the secret back out of the deployment.
+    if let Some(enabled) = env_non_empty("NTFY_ENABLED") {
+        cfg.ntfy_enabled = matches!(
+            enabled.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
 }
 
 impl Default for AppConfig {
@@ -529,10 +567,11 @@ async fn handle_get_config(
     State(state): State<AppState>,
 ) -> Json<AppConfig> {
     let path = state.data_dir.join("config.json");
+    let mut config = AppConfig::default();
     if path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                Ok(config) => return Json(config),
+                Ok(parsed) => config = parsed,
                 Err(e) => warn!(
                     "config.json is corrupt — serving defaults (file NOT overwritten; \
                      a Save from the UI will replace it): {}",
@@ -542,7 +581,19 @@ async fn handle_get_config(
             Err(e) => warn!("Cannot read config.json — serving defaults: {}", e),
         }
     }
-    Json(AppConfig::default())
+
+    // Show the settings that are actually in force, so the UI does not display
+    // an empty topic while the environment is driving real notifications.
+    apply_ntfy_env_overrides(&mut config);
+
+    // Never hand an environment-supplied token to a browser: it comes from the
+    // secret store, not from this user, and config.json is world-readable to
+    // anyone who can reach the dashboard.
+    if std::env::var("NTFY_TOKEN").is_ok_and(|v| !v.trim().is_empty()) {
+        config.ntfy_token = None;
+    }
+
+    Json(config)
 }
 
 /// `POST /api/config` — save the new sources configuration to config.json.
@@ -1266,6 +1317,19 @@ async fn stream_pod_logs_for_job(
     let label = format!("batch.kubernetes.io/job-name={}", job_name);
     let lp = ListParams::default().labels(&label);
 
+    /// Record why the run's output is missing, in the log buffer as well as the
+    /// server log. Without this the UI console is silently blank and, worse,
+    /// `failure_excerpt` has nothing to quote and `looks_like_token_expiry`
+    /// cannot match — so an expired API key would alert as a generic failure.
+    async fn report_unavailable(
+        logs: &Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+        reason: String,
+    ) {
+        warn!("{}", reason);
+        let mut l = logs.lock().await;
+        l.push_back(format!("[ERROR] {}", reason));
+    }
+
     // Wait up to 5 min (60 × 5 s) for the pod to be created.
     let pod_name = {
         let mut found: Option<String> = None;
@@ -1278,13 +1342,26 @@ async fn stream_pod_logs_for_job(
                         break;
                     }
                 }
+                // 403 will not fix itself by retrying for five minutes: the
+                // ServiceAccount needs pods:list and pods/log:get in its Role.
+                Err(kube::Error::Api(ref resp)) if resp.code == 403 => {
+                    report_unavailable(&logs, format!(
+                        "Cannot read scraper logs: the ServiceAccount is not allowed to list pods \
+                         in this namespace (needs pods: list,get and pods/log: get). \
+                         Run output will be missing from the dashboard and from failure notifications."
+                    )).await;
+                    return;
+                }
                 Err(e) => warn!("Waiting for pod for job {}: {}", job_name, e),
             }
         }
         match found {
             Some(n) => n,
             None => {
-                warn!("No pod appeared for job {} within 5 minutes — giving up on log stream", job_name);
+                report_unavailable(&logs, format!(
+                    "No pod appeared for job {} within 5 minutes — no run output captured",
+                    job_name
+                )).await;
                 return;
             }
         }
@@ -1326,6 +1403,54 @@ async fn stream_pod_logs_for_job(
             }
         }
         Err(e) => warn!("Could not stream logs for pod {}: {}", pod_name, e),
+    }
+}
+
+/// Fetch the tail of a finished Job's pod logs in one shot (no follow).
+///
+/// The streaming path only starts when a Job is observed *running*, so a Job
+/// that begins and ends between two polls — or one that was already running
+/// when the server restarted — would otherwise leave no output at all. That
+/// matters beyond the dashboard console: `failure_excerpt` would have nothing
+/// to quote, and `looks_like_token_expiry` could not match, downgrading an
+/// expired-credentials alert to a generic failure.
+async fn fetch_job_logs_once(
+    client: kube::Client,
+    namespace: &str,
+    job_name: &str,
+    logs: &Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+) {
+    use k8s_openapi::api::core::v1::Pod;
+    use kube::{api::ListParams, api::LogParams, Api};
+
+    let pod_api: Api<Pod> = Api::namespaced(client, namespace);
+    let selector = format!("batch.kubernetes.io/job-name={}", job_name);
+
+    let pods = match pod_api.list(&ListParams::default().labels(&selector)).await {
+        Ok(list) => list.items,
+        Err(e) => {
+            warn!("Cannot list pods for finished job {}: {}", job_name, e);
+            return;
+        }
+    };
+    let Some(pod_name) = pods.into_iter().find_map(|p| p.metadata.name) else {
+        warn!("No pod found for finished job {} — its pod may already be deleted", job_name);
+        return;
+    };
+
+    let params = LogParams { tail_lines: Some(200), ..Default::default() };
+    match pod_api.logs(&pod_name, &params).await {
+        Ok(text) => {
+            const MAX_LOG_LINES: usize = 150;
+            let mut l = logs.lock().await;
+            for line in text.lines() {
+                l.push_back(line.to_string());
+                if l.len() > MAX_LOG_LINES {
+                    l.pop_front();
+                }
+            }
+        }
+        Err(e) => warn!("Cannot read logs for pod {}: {}", pod_name, e),
     }
 }
 
@@ -1557,6 +1682,229 @@ fn spawn_k8s_job(
     });
 }
 
+/// Watch Jobs created by the CronJob and report their outcome over ntfy.
+///
+/// Under `SCRAPE_RUNNER=k8s` the daily run is a pod the CronJob creates — the
+/// server neither spawns it nor is told about it, so without this loop the
+/// unattended 06:00 run is the one run that never notifies. All ntfy code lives
+/// in this binary (the scraper has none), so the server has to observe those
+/// Jobs itself.
+///
+/// CronJob-created Jobs carry an ownerReference back to the CronJob; Jobs this
+/// server creates do not. That is the discriminator, so the two paths cannot
+/// double-notify for the same run.
+async fn cronjob_watcher_loop(state: AppState) {
+    use k8s_openapi::api::batch::v1::Job;
+    use kube::{api::ListParams, Api};
+    use std::collections::HashSet;
+
+    if !is_k8s_mode() {
+        return;
+    }
+
+    let namespace = k8s_namespace();
+    let cronjob_name =
+        std::env::var("K8S_CRONJOB_NAME").unwrap_or_else(|_| "news-scraper".to_string());
+
+    let client = match kube::Client::try_default().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("CronJob watcher: cannot connect to Kubernetes API: {} — scheduled runs will not notify", e);
+            return;
+        }
+    };
+    let job_api: Api<Job> = Api::namespaced(client.clone(), &namespace);
+
+    info!(
+        "CronJob watcher: watching Jobs owned by CronJob '{}' in namespace '{}'",
+        cronjob_name, namespace
+    );
+
+    // Jobs already finished before this loop started. Seeded on the first pass
+    // so a server restart does not replay notifications for old runs.
+    let mut settled: HashSet<String> = HashSet::new();
+    let mut announced_start: HashSet<String> = HashSet::new();
+    let mut first_pass = true;
+
+    loop {
+        let jobs = match job_api.list(&ListParams::default()).await {
+            Ok(list) => list.items,
+            Err(e) => {
+                warn!("CronJob watcher: cannot list Jobs: {}", e);
+                time::sleep(time::Duration::from_secs(30)).await;
+                continue;
+            }
+        };
+
+        for job in jobs {
+            let owned_by_cronjob = job
+                .metadata
+                .owner_references
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .any(|o| o.kind == "CronJob" && o.name == cronjob_name);
+            if !owned_by_cronjob {
+                continue;
+            }
+
+            let Some(name) = job.metadata.name.clone() else { continue };
+            if settled.contains(&name) {
+                continue;
+            }
+
+            let status = job.status.unwrap_or_default();
+            let succeeded = status.succeeded.unwrap_or(0);
+            let failed = status.failed.unwrap_or(0);
+            let active = status.active.unwrap_or(0);
+            let is_terminal = succeeded > 0 || (failed > 0 && active == 0);
+
+            // ── Running: mirror it into the UI, announce once ──────────
+            if !is_terminal && active > 0 && announced_start.insert(name.clone()) {
+                if first_pass {
+                    // Already running when we started — adopt it silently
+                    // rather than claiming it just began.
+                    info!("CronJob watcher: adopting in-flight Job {}", name);
+                } else {
+                    info!("CronJob watcher: scheduled Job {} started", name);
+                }
+                if !state.is_scraping.swap(true, Ordering::SeqCst) {
+                    let mut l = state.scraper_logs.lock().await;
+                    l.clear();
+                    l.push_back(format!("--- Scheduled run started (job {}) ---", name));
+                    drop(l);
+                    tokio::spawn(stream_pod_logs_for_job(
+                        client.clone(),
+                        namespace.clone(),
+                        name.clone(),
+                        Arc::clone(&state.scraper_logs),
+                    ));
+                }
+                if !first_pass {
+                    let cfg = load_app_config(&state.data_dir);
+                    if cfg.ntfy_on_scheduled_run {
+                        notify(&state.data_dir, NtfyMessage {
+                            title: "News run started".to_string(),
+                            body: format!(
+                                "Scheduled daily run started at {} UTC (job: {}).",
+                                Utc::now().format("%Y-%m-%d %H:%M"),
+                                name
+                            ),
+                            priority: 2,
+                            tags: "hourglass_flowing_sand",
+                        })
+                        .await;
+                    }
+                }
+            }
+
+            if !is_terminal {
+                continue;
+            }
+
+            // ── Terminal: record it, then notify unless we're seeding ───
+            settled.insert(name.clone());
+            let success = succeeded > 0;
+
+            if first_pass {
+                // Pre-existing completed Job — remember it, stay quiet.
+                continue;
+            }
+
+            info!(
+                "CronJob watcher: scheduled Job {} finished ({})",
+                name,
+                if success { "succeeded" } else { "failed" }
+            );
+
+            state.last_run_success.store(success, Ordering::SeqCst);
+            state.is_scraping.store(false, Ordering::SeqCst);
+
+            // Give the log stream a moment to flush the tail of the run before
+            // the failure excerpt snapshots it.
+            time::sleep(time::Duration::from_millis(500)).await;
+
+            // If we never saw this Job running we never streamed its logs, so
+            // pull them now — the excerpt and the credential check both depend
+            // on having the run's output.
+            let have_output = state
+                .scraper_logs
+                .lock()
+                .await
+                .iter()
+                .any(|l| !l.starts_with("---") && !l.trim().is_empty());
+            if !have_output {
+                fetch_job_logs_once(
+                    client.clone(),
+                    &namespace,
+                    &name,
+                    &Arc::clone(&state.scraper_logs),
+                )
+                .await;
+            }
+
+            let cfg = load_app_config(&state.data_dir);
+            if !cfg.ntfy_enabled {
+                continue;
+            }
+            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+            let msg = if success {
+                cfg.ntfy_on_success.then(|| NtfyMessage {
+                    title: "News run complete".to_string(),
+                    body: format!("Scheduled daily run finished successfully (job: {}).", name),
+                    priority: 2,
+                    tags: "white_check_mark",
+                })
+            } else if looks_like_token_expiry(&lines) && cfg.ntfy_on_token_expiry {
+                Some(NtfyMessage {
+                    title: "LLM credentials rejected".to_string(),
+                    body: format!(
+                        "Scheduled daily run failed: the API key or OAuth token looks expired or invalid.\n\n{}",
+                        failure_excerpt(&lines)
+                    ),
+                    priority: 5,
+                    tags: "key,rotating_light",
+                })
+            } else {
+                cfg.ntfy_on_failure.then(|| NtfyMessage {
+                    title: "News run failed".to_string(),
+                    body: format!(
+                        "Scheduled daily run failed (job: {}).\n\n{}",
+                        name,
+                        failure_excerpt(&lines)
+                    ),
+                    priority: 4,
+                    tags: "rotating_light",
+                })
+            };
+            if let Some(msg) = msg {
+                notify(&state.data_dir, msg).await;
+            }
+        }
+
+        if first_pass {
+            info!(
+                "CronJob watcher: seeded {} already-finished Job(s) — notifications start from the next run",
+                settled.len()
+            );
+        }
+
+        // Drop bookkeeping for Jobs the TTL controller has deleted, so these
+        // sets cannot grow without bound in a long-lived server. Re-seeding on
+        // the next pass rather than clearing outright means the reset cannot
+        // replay notifications for runs that finished long ago.
+        if settled.len() > 200 {
+            settled.clear();
+            announced_start.clear();
+            first_pass = true;
+        } else {
+            first_pass = false;
+        }
+
+        time::sleep(time::Duration::from_secs(30)).await;
+    }
+}
+
 /// Dispatch to the Kubernetes Job runner or the local process fork,
 /// depending on the `SCRAPE_RUNNER` environment variable.
 fn trigger_scrape(
@@ -1704,7 +2052,12 @@ async fn main() {
     };
 
     // ── Spawn internal daily scheduler ────────────────────────────
+    // (exits immediately under SCRAPE_RUNNER=k8s — the CronJob owns the schedule)
     tokio::spawn(daily_scheduler_loop(state.clone()));
+
+    // ── Watch CronJob-created Jobs so the scheduled run notifies ──
+    // (exits immediately unless SCRAPE_RUNNER=k8s)
+    tokio::spawn(cronjob_watcher_loop(state.clone()));
 
     let app = Router::new()
         // Version check for frontend upgrades
@@ -1822,5 +2175,62 @@ mod tests {
         assert!(cfg.enable_radio && cfg.enable_podcast && cfg.enable_tldr);
         assert!(cfg.skip_paywalled_posts);
         assert!(cfg.llm_radio.is_none());
+    }
+
+    /// The env overrides exist so the ntfy topic/token can come from a secret
+    /// store instead of config.json on a PVC. These assertions pin the two
+    /// behaviours that are easy to regress: a supplied topic switching
+    /// notifications on, and an explicit NTFY_ENABLED still winning.
+    ///
+    /// Single test rather than several: env vars are process-global, so
+    /// separate #[test] fns would race each other under the default harness.
+    #[test]
+    fn ntfy_env_overrides_config() {
+        // Baseline: nothing set, config.json values survive untouched.
+        for k in ["NTFY_SERVER", "NTFY_TOPIC", "NTFY_TOKEN", "NTFY_ENABLED"] {
+            std::env::remove_var(k);
+        }
+        let mut cfg = AppConfig::default();
+        cfg.ntfy_server = "https://from-config".to_string();
+        cfg.ntfy_topic = "config-topic".to_string();
+        apply_ntfy_env_overrides(&mut cfg);
+        assert_eq!(cfg.ntfy_server, "https://from-config");
+        assert_eq!(cfg.ntfy_topic, "config-topic");
+        assert!(!cfg.ntfy_enabled, "default stays disabled without a topic");
+
+        // A topic from the environment wins and turns notifications on —
+        // otherwise ntfy_enabled's false default silently drops every message.
+        std::env::set_var("NTFY_SERVER", "https://ntfy.internal");
+        std::env::set_var("NTFY_TOPIC", "env-topic");
+        std::env::set_var("NTFY_TOKEN", "tk_secret");
+        let mut cfg = AppConfig::default();
+        cfg.ntfy_server = "https://from-config".to_string();
+        cfg.ntfy_topic = "config-topic".to_string();
+        apply_ntfy_env_overrides(&mut cfg);
+        assert_eq!(cfg.ntfy_server, "https://ntfy.internal");
+        assert_eq!(cfg.ntfy_topic, "env-topic");
+        assert_eq!(cfg.ntfy_token.as_deref(), Some("tk_secret"));
+        assert!(cfg.ntfy_enabled);
+
+        // Explicit disable beats the implicit enable, so an injected topic can
+        // be muted without removing the secret from the deployment.
+        std::env::set_var("NTFY_ENABLED", "false");
+        let mut cfg = AppConfig::default();
+        apply_ntfy_env_overrides(&mut cfg);
+        assert!(!cfg.ntfy_enabled);
+
+        // Blank values are ignored rather than blanking real config — an unset
+        // ExternalSecret key renders as "".
+        std::env::set_var("NTFY_TOPIC", "   ");
+        std::env::remove_var("NTFY_ENABLED");
+        let mut cfg = AppConfig::default();
+        cfg.ntfy_topic = "config-topic".to_string();
+        apply_ntfy_env_overrides(&mut cfg);
+        assert_eq!(cfg.ntfy_topic, "config-topic");
+        assert!(!cfg.ntfy_enabled);
+
+        for k in ["NTFY_SERVER", "NTFY_TOPIC", "NTFY_TOKEN", "NTFY_ENABLED"] {
+            std::env::remove_var(k);
+        }
     }
 }

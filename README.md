@@ -128,6 +128,62 @@ volume the server materialises `config.json` from it — so losing the PVC only
 costs the generated EPUBs/MP3s, never your source list. An existing `config.json`
 always wins; UI edits are never overwritten.
 
+### `SCRAPE_RUNNER=k8s` — don't scrape inside the web server
+
+By default the server runs the scraper as a child process. That is right for
+Docker Compose, but wrong in Kubernetes: Playwright's memory counts against the
+web server's pod, so a 512Mi server pod is OOMKilled the moment a scrape starts.
+
+Set `SCRAPE_RUNNER=k8s` on the server and it instead **creates a Job from the
+CronJob's `jobTemplate`**, so every run — scheduled, manual, or audio regen —
+gets the CronJob's sizing, `backoffLimit`, and TTL. In this mode:
+
+- the internal daily scheduler is disabled — **the CronJob owns the schedule**,
+  so leave it unsuspended and keep the timing in Git rather than in `config.json`
+- the server watches Jobs the CronJob created and reports their outcome to the
+  dashboard and over ntfy, so the unattended daily run notifies like any other
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SCRAPE_RUNNER` | `local` | `k8s` to create Jobs instead of forking Python |
+| `K8S_NAMESPACE` | from ServiceAccount | Namespace to create and watch Jobs in |
+| `K8S_CRONJOB_NAME` | `news-scraper` | CronJob to copy the `jobTemplate` from |
+
+The server's ServiceAccount needs, in its own namespace:
+
+```yaml
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs/status"]
+  verbs: ["get"]
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["get"]
+# Required for run output. Without these the dashboard console stays blank
+# and failure notifications cannot quote the error — which also means an
+# expired API key is reported as a generic failure instead of a credential alert.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+```
+
+### ntfy credentials from a secret store
+
+`ntfy_topic` and `ntfy_token` are credentials, but `config.json` lives on a PVC —
+not in Git, and lost with the volume. The server therefore reads `NTFY_SERVER`,
+`NTFY_TOPIC`, and `NTFY_TOKEN` from the environment, overriding `config.json`
+when set, so they can come from a Secret or ExternalSecret.
+
+Supplying `NTFY_TOPIC` also enables notifications, since `ntfy_enabled` defaults
+to off and would otherwise discard every message silently. Set
+`NTFY_ENABLED=false` to mute without removing the secret. An environment-supplied
+token is never returned by `/api/config`.
+
 ---
 
 ## Architecture
