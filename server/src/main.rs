@@ -1021,7 +1021,7 @@ async fn handle_scrape_trigger(
     if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
     if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    spawn_scraper_job(state.clone(), envs, "news scraper pipeline", RunTrigger::Manual);
+    trigger_scrape(state.clone(), envs, "news scraper pipeline", RunTrigger::Manual);
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -1066,7 +1066,7 @@ async fn handle_regen_audio(
     if let Some(ss) = params.short_sources { envs.push(("SHORT_SOURCES", ss)); }
     if let Some(ls) = params.long_sources { envs.push(("LONG_SOURCES", ls)); }
 
-    spawn_scraper_job(state.clone(), envs, "audio regen", RunTrigger::Manual);
+    trigger_scrape(state.clone(), envs, "audio regen", RunTrigger::Manual);
 
     Ok(Json(ScrapeStatus {
         running: true,
@@ -1212,9 +1212,376 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// KUBERNETES JOB RUNNER  (active when SCRAPE_RUNNER=k8s)
+//
+// When deployed in Kubernetes the server must NOT fork Playwright in its
+// own pod: a 512Mi server pod cannot host a Chromium process.  Setting
+// SCRAPE_RUNNER=k8s makes the server create a Kubernetes Job from the
+// existing CronJob's jobTemplate instead, which runs in the CronJob's
+// properly sized pod (3Gi request / 6Gi limit).
+//
+// The internal daily scheduler is also disabled in this mode — the
+// CronJob owns the schedule, keeping it declarative and in Git.
+//
+// SCRAPE_RUNNER=local (default) preserves the original fork behaviour so
+// docker-compose users are unaffected.
+// ═══════════════════════════════════════════════════════════════════
+
+fn is_k8s_mode() -> bool {
+    std::env::var("SCRAPE_RUNNER").as_deref() == Ok("k8s")
+}
+
+/// Namespace for Job creation: explicit env var first, then the
+/// projected ServiceAccount file (present inside any k8s pod).
+fn k8s_namespace() -> String {
+    std::env::var("K8S_NAMESPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::fs::read_to_string(
+                "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+            )
+            .ok()
+            .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "my-news".to_string())
+}
+
+/// Stream the logs of the first pod belonging to a Job into the log ring
+/// buffer.  Waits up to 5 minutes for a pod to be scheduled, then up to
+/// 2 minutes for it to leave Pending.  Silently returns on timeout so the
+/// job status poller can still mark the run as failed if appropriate.
+async fn stream_pod_logs_for_job(
+    client: kube::Client,
+    namespace: String,
+    job_name: String,
+    logs: Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+) {
+    use futures::{io::AsyncBufReadExt as _, StreamExt as _};
+    use k8s_openapi::api::core::v1::Pod;
+    use kube::{api::ListParams, api::LogParams, Api};
+
+    let pod_api: Api<Pod> = Api::namespaced(client, &namespace);
+    let label = format!("batch.kubernetes.io/job-name={}", job_name);
+    let lp = ListParams::default().labels(&label);
+
+    // Wait up to 5 min (60 × 5 s) for the pod to be created.
+    let pod_name = {
+        let mut found: Option<String> = None;
+        for _ in 0..60_u32 {
+            time::sleep(time::Duration::from_secs(5)).await;
+            match pod_api.list(&lp).await {
+                Ok(list) => {
+                    if let Some(name) = list.items.into_iter().find_map(|p| p.metadata.name) {
+                        found = Some(name);
+                        break;
+                    }
+                }
+                Err(e) => warn!("Waiting for pod for job {}: {}", job_name, e),
+            }
+        }
+        match found {
+            Some(n) => n,
+            None => {
+                warn!("No pod appeared for job {} within 5 minutes — giving up on log stream", job_name);
+                return;
+            }
+        }
+    };
+
+    // Wait up to 2 min for the pod to leave Pending.
+    for _ in 0..24_u32 {
+        match pod_api.get_status(&pod_name).await {
+            Ok(pod) => {
+                let phase = pod.status.and_then(|s| s.phase).unwrap_or_default();
+                if !phase.is_empty() && phase != "Pending" {
+                    break;
+                }
+            }
+            Err(_) => {}
+        }
+        time::sleep(time::Duration::from_secs(5)).await;
+    }
+
+    // Stream logs line-by-line into the ring buffer.
+    // kube 4.x: log_stream() returns impl futures::AsyncBufRead, not a byte Stream.
+    let log_params = LogParams { follow: true, timestamps: false, ..Default::default() };
+    match pod_api.log_stream(&pod_name, &log_params).await {
+        Ok(reader) => {
+            const MAX_LOG_LINES: usize = 150;
+            let mut lines = reader.lines();
+            while let Some(result) = lines.next().await {
+                match result {
+                    Ok(line) => {
+                        let mut l = logs.lock().await;
+                        l.push_back(line);
+                        if l.len() > MAX_LOG_LINES { l.pop_front(); }
+                    }
+                    Err(e) => {
+                        warn!("Log stream error for pod {}: {}", pod_name, e);
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => warn!("Could not stream logs for pod {}: {}", pod_name, e),
+    }
+}
+
+/// Create a Kubernetes Job from the `news-scraper` CronJob's jobTemplate,
+/// inject optional env vars, then poll until the Job completes.
+///
+/// Mirrors `spawn_scraper_job` in calling convention: spawns a background
+/// task, releases `is_scraping` on completion, and fires ntfy notifications.
+fn spawn_k8s_job(
+    state: AppState,
+    extra_envs: Vec<(&'static str, String)>,
+    label: &'static str,
+    trigger: RunTrigger,
+) {
+    use k8s_openapi::api::batch::v1::{CronJob, Job};
+    use k8s_openapi::api::core::v1::EnvVar;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use kube::{api::PostParams, Api};
+
+    let namespace = k8s_namespace();
+    let cronjob_name =
+        std::env::var("K8S_CRONJOB_NAME").unwrap_or_else(|_| "news-scraper".to_string());
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let job_prefix = if label.contains("regen") { "news-scraper-regen" } else { "news-scraper-manual" };
+    let job_name = format!("{}-{}", job_prefix, ts);
+
+    tokio::spawn(async move {
+        // Clear log buffer for this run.
+        {
+            let mut l = state.scraper_logs.lock().await;
+            l.clear();
+            l.push_back(format!("--- Starting {} (k8s mode) ---", label));
+        }
+        state.last_run_success.store(true, Ordering::SeqCst);
+
+        // ── Build the k8s client ──────────────────────────────────────
+        let client = match kube::Client::try_default().await {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("Cannot connect to Kubernetes API: {}", e);
+                error!("{}", msg);
+                let mut l = state.scraper_logs.lock().await;
+                l.push_back(format!("[ERROR] {}", msg));
+                state.last_run_success.store(false, Ordering::SeqCst);
+                state.is_scraping.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        // ── Fetch CronJob → extract jobTemplate.spec ──────────────────
+        let cj_api: Api<CronJob> = Api::namespaced(client.clone(), &namespace);
+        let mut job_spec = match cj_api.get(&cronjob_name).await {
+            Ok(cj) => match cj.spec.and_then(|s| s.job_template.spec) {
+                Some(js) => js,
+                None => {
+                    let msg = format!("CronJob {} has no jobTemplate.spec", cronjob_name);
+                    error!("{}", msg);
+                    let mut l = state.scraper_logs.lock().await;
+                    l.push_back(format!("[ERROR] {}", msg));
+                    state.last_run_success.store(false, Ordering::SeqCst);
+                    state.is_scraping.store(false, Ordering::SeqCst);
+                    return;
+                }
+            },
+            Err(e) => {
+                let msg = format!("Cannot get CronJob {}: {}", cronjob_name, e);
+                error!("{}", msg);
+                let mut l = state.scraper_logs.lock().await;
+                l.push_back(format!("[ERROR] {}", msg));
+                state.last_run_success.store(false, Ordering::SeqCst);
+                state.is_scraping.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        // ── Inject extra env vars into every container ─────────────────
+        // For audio regen: REGEN_DATE, REGEN_TRACK etc are passed this way.
+        if !extra_envs.is_empty() {
+            let add: Vec<EnvVar> = extra_envs.iter().map(|(k, v)| EnvVar {
+                name: k.to_string(),
+                value: Some(v.clone()),
+                ..Default::default()
+            }).collect();
+            if let Some(pod_spec) = job_spec.template.spec.as_mut() {
+                for c in pod_spec.containers.iter_mut() {
+                    let mut envs = c.env.take().unwrap_or_default();
+                    for e in &add {
+                        envs.retain(|x| x.name != e.name);
+                        envs.push(e.clone());
+                    }
+                    c.env = Some(envs);
+                }
+            }
+        }
+
+        // ── Create the Job ─────────────────────────────────────────────
+        let job = Job {
+            metadata: ObjectMeta {
+                name: Some(job_name.clone()),
+                namespace: Some(namespace.clone()),
+                ..Default::default()
+            },
+            spec: Some(job_spec),
+            ..Default::default()
+        };
+        let job_api: Api<Job> = Api::namespaced(client.clone(), &namespace);
+        if let Err(e) = job_api.create(&PostParams::default(), &job).await {
+            let msg = format!("Failed to create Job {}: {}", job_name, e);
+            error!("{}", msg);
+            let mut l = state.scraper_logs.lock().await;
+            l.push_back(format!("[ERROR] {}", msg));
+            state.last_run_success.store(false, Ordering::SeqCst);
+            state.is_scraping.store(false, Ordering::SeqCst);
+            return;
+        }
+        {
+            let mut l = state.scraper_logs.lock().await;
+            l.push_back(format!("--- Kubernetes Job {} created ---", job_name));
+        }
+        info!("Created Kubernetes Job {} for {}", job_name, label);
+
+        // ── ntfy: run started ──────────────────────────────────────────
+        let cfg = load_app_config(&state.data_dir);
+        let announce_start = match trigger {
+            RunTrigger::Scheduled => cfg.ntfy_on_scheduled_run,
+            RunTrigger::Manual    => cfg.ntfy_on_manual_run,
+        };
+        if announce_start {
+            notify(&state.data_dir, NtfyMessage {
+                title: "News run started".to_string(),
+                body: format!(
+                    "{} started at {} UTC (job: {}).",
+                    label, Utc::now().format("%Y-%m-%d %H:%M"), job_name
+                ),
+                priority: 2,
+                tags: "hourglass_flowing_sand",
+            }).await;
+        }
+
+        // ── Stream pod logs in a background task ───────────────────────
+        tokio::spawn(stream_pod_logs_for_job(
+            client.clone(),
+            namespace.clone(),
+            job_name.clone(),
+            Arc::clone(&state.scraper_logs),
+        ));
+
+        // ── Poll job status until it completes ─────────────────────────
+        let success = loop {
+            time::sleep(time::Duration::from_secs(15)).await;
+
+            let status = match job_api.get_status(&job_name).await {
+                Ok(j) => j.status.unwrap_or_default(),
+                Err(kube::Error::Api(ref resp)) if resp.code == 404 => {
+                    // Cleaned up by ttlSecondsAfterFinished before we polled.
+                    info!("Job {} no longer exists (TTL cleanup) — ending poll", job_name);
+                    break state.last_run_success.load(Ordering::SeqCst);
+                }
+                Err(e) => {
+                    warn!("Error polling Job {}: {}", job_name, e);
+                    continue;
+                }
+            };
+
+            let succeeded = status.succeeded.unwrap_or(0);
+            let failed    = status.failed.unwrap_or(0);
+            let active    = status.active.unwrap_or(0);
+
+            if succeeded > 0 {
+                info!("Job {} succeeded", job_name);
+                break true;
+            }
+            if failed > 0 && active == 0 {
+                // backoffLimit exhausted — no more pods will be started.
+                info!("Job {} failed (failed={}, active={})", job_name, failed, active);
+                break false;
+            }
+        };
+
+        state.last_run_success.store(success, Ordering::SeqCst);
+        {
+            let mut l = state.scraper_logs.lock().await;
+            if success {
+                l.push_back(format!("--- {} completed successfully ---", label));
+            } else {
+                l.push_back(format!("--- {} failed ---", label));
+            }
+        }
+
+        // ── ntfy: completion ───────────────────────────────────────────
+        time::sleep(time::Duration::from_millis(250)).await;
+        let cfg = load_app_config(&state.data_dir);
+        if cfg.ntfy_enabled {
+            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+            let msg = if success {
+                cfg.ntfy_on_success.then(|| NtfyMessage {
+                    title: "News run complete".to_string(),
+                    body: format!("{} finished successfully.", label),
+                    priority: 2,
+                    tags: "white_check_mark",
+                })
+            } else if looks_like_token_expiry(&lines) && cfg.ntfy_on_token_expiry {
+                Some(NtfyMessage {
+                    title: "LLM credentials rejected".to_string(),
+                    body: format!(
+                        "{} failed: the API key or OAuth token looks expired or invalid.\n\n{}",
+                        label, failure_excerpt(&lines)
+                    ),
+                    priority: 5,
+                    tags: "key,rotating_light",
+                })
+            } else {
+                cfg.ntfy_on_failure.then(|| NtfyMessage {
+                    title: "News run failed".to_string(),
+                    body: format!("{} failed.\n\n{}", label, failure_excerpt(&lines)),
+                    priority: 4,
+                    tags: "rotating_light",
+                })
+            };
+            if let Some(msg) = msg {
+                notify(&state.data_dir, msg).await;
+            }
+        }
+
+        state.is_scraping.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Dispatch to the Kubernetes Job runner or the local process fork,
+/// depending on the `SCRAPE_RUNNER` environment variable.
+fn trigger_scrape(
+    state: AppState,
+    envs: Vec<(&'static str, String)>,
+    label: &'static str,
+    trigger: RunTrigger,
+) {
+    if is_k8s_mode() {
+        spawn_k8s_job(state, envs, label, trigger);
+    } else {
+        spawn_scraper_job(state, envs, label, trigger);
+    }
+}
+
 /// Wakes every 30 s, checks the configured daily run time (UTC), and fires the
 /// scraper when the clock matches — once per calendar day regardless of restarts.
+///
+/// In k8s mode this loop exits immediately: the CronJob owns the schedule,
+/// keeping it declarative and in Git.  The server only handles UI/manual triggers.
 async fn daily_scheduler_loop(state: AppState) {
+    if is_k8s_mode() {
+        info!("SCRAPE_RUNNER=k8s — internal daily scheduler disabled; CronJob owns the schedule");
+        return;
+    }
     let mut last_triggered_date: Option<String> = None;
     loop {
         time::sleep(time::Duration::from_secs(30)).await;
@@ -1231,7 +1598,7 @@ async fn daily_scheduler_loop(state: AppState) {
                     "Daily scheduler: triggering scraper at {:02}:{:02} UTC",
                     config.daily_run_hour, config.daily_run_minute
                 );
-                spawn_scraper_job(state.clone(), vec![], "scheduled daily run", RunTrigger::Scheduled);
+                trigger_scrape(state.clone(), vec![], "scheduled daily run", RunTrigger::Scheduled);
             } else {
                 info!("Daily scheduler: scraper already running at trigger time, skipping");
             }
@@ -1283,6 +1650,10 @@ async fn main() {
 
     info!("Data directory    : {:?}", data_dir);
     info!("Frontend directory: {:?}", frontend_dir);
+    info!(
+        "Scrape runner     : {} (set SCRAPE_RUNNER=k8s to delegate to a Kubernetes Job)",
+        std::env::var("SCRAPE_RUNNER").unwrap_or_else(|_| "local".to_string())
+    );
 
     // Single source of truth for default sources: materialise config.json on
     // first boot. The scraper has no embedded defaults and reads this file.
