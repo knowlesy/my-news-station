@@ -179,6 +179,11 @@ not in Git, and lost with the volume. The server therefore reads `NTFY_SERVER`,
 `NTFY_TOPIC`, and `NTFY_TOKEN` from the environment, overriding `config.json`
 when set, so they can come from a Secret or ExternalSecret.
 
+`NTFY_TOKEN` accepts either form of ntfy credential: an access token
+(`tk_…`, sent as Bearer) or `username:password` (sent as Basic auth). Anything
+containing a colon is treated as a login, so you do not have to mint a token
+just to publish. Leave it unset for an open topic.
+
 Supplying `NTFY_TOPIC` also enables notifications, since `ntfy_enabled` defaults
 to off and would otherwise discard every message silently. Set
 `NTFY_ENABLED=false` to mute without removing the secret. An environment-supplied

@@ -134,7 +134,8 @@ struct AppConfig {
     /// so treat it as a secret on ntfy.sh unless the topic is access-controlled.
     #[serde(default)]
     ntfy_topic: String,
-    /// Optional bearer token (`tk_…`) for a protected topic.
+    /// Optional credential for a protected topic: an access token (`tk_…`) or
+    /// `user:password`, which is sent as Basic auth.
     #[serde(default)]
     ntfy_token: Option<String>,
     /// Notify when the internal daily scheduler fires a run.
@@ -827,8 +828,15 @@ async fn ntfy_publish(
         .header("Tags", msg.tags)
         .body(msg.body.clone());
 
+    // ntfy accepts either an access token as a bearer credential or ordinary
+    // username/password over Basic auth. Anything containing a colon is treated
+    // as "user:password" so a plain ntfy login works without minting a token
+    // first; everything else is sent as a bearer token.
     if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
-        req = req.bearer_auth(t);
+        match t.split_once(':') {
+            Some((user, pass)) if !user.is_empty() => req = req.basic_auth(user, Some(pass)),
+            _ => req = req.bearer_auth(t),
+        }
     }
 
     let resp = req
