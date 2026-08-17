@@ -399,6 +399,52 @@ function syncNtfyEnabledState() {
   const block = $('ntfyConfigBlock');
   block.style.opacity = on ? '1' : '0.45';
   block.querySelectorAll('input, button').forEach(el => { el.disabled = !on; });
+  // Re-apply after the enable/disable sweep above, which would otherwise
+  // re-enable inputs the environment owns.
+  applyNtfyEnvLocks();
+}
+
+/** True when the deployment's environment owns this ntfy field. */
+function ntfyLocked(field) {
+  return (currentConfig.ntfy_env_locked || []).includes(field);
+}
+
+/**
+ * Lock the connection fields the deployment supplies via NTFY_* env vars.
+ *
+ * Those override config.json on every read, so leaving them editable makes a
+ * save look successful and then silently revert — which is exactly what it
+ * looks like when someone reports "settings don't stick".
+ */
+function applyNtfyEnvLocks() {
+  const locked = currentConfig.ntfy_env_locked || [];
+  const fields = {
+    server:  'ntfyServerInput',
+    topic:   'ntfyTopicInput',
+    token:   'ntfyTokenInput',
+    enabled: 'ntfyEnabledCheckbox',
+  };
+  for (const [name, id] of Object.entries(fields)) {
+    const el = $(id);
+    if (!el) continue;
+    if (locked.includes(name)) {
+      el.disabled = true;
+      el.title = `Set by the ${'NTFY_' + name.toUpperCase()} environment variable — edit it in the deployment, not here.`;
+      el.style.cursor = 'not-allowed';
+    } else {
+      el.title = '';
+      el.style.cursor = '';
+    }
+  }
+
+  const note = $('ntfyEnvLockNote');
+  if (note) {
+    note.style.display = locked.length ? 'block' : 'none';
+    note.textContent =
+      `ⓘ ${locked.join(', ')} ${locked.length === 1 ? 'is' : 'are'} supplied by the ` +
+      `deployment's NTFY_* environment variables and cannot be changed here. ` +
+      `The token is never sent to the browser.`;
+  }
 }
 
 $('ntfyEnabledCheckbox').addEventListener('change', syncNtfyEnabledState);
@@ -412,10 +458,12 @@ $('ntfyTestBtn').addEventListener('click', async () => {
     const res = await fetch('/api/ntfy/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Omit anything the environment owns so the server tests its own
+      // effective values — notably the token, which the browser never sees.
       body: JSON.stringify({
-        server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh',
-        topic: $('ntfyTopicInput').value.trim(),
-        token: $('ntfyTokenInput').value.trim() || null,
+        ...(ntfyLocked('server') ? {} : { server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh' }),
+        ...(ntfyLocked('topic')  ? {} : { topic: $('ntfyTopicInput').value.trim() }),
+        ...(ntfyLocked('token')  ? {} : { token: $('ntfyTokenInput').value.trim() || null }),
       }),
     });
     const data = await res.json();
@@ -541,10 +589,14 @@ $('saveOptionsBtn').addEventListener('click', async () => {
       source_health_dead_days: parseInt($('sourceHealthDeadDaysInput').value, 10) || 30,
       cleanup_max_age_days: parseInt($('cleanupDaysInput').value, 10) || 10,
       source_order: sourceOrderDraft,
-      ntfy_enabled: $('ntfyEnabledCheckbox').checked,
-      ntfy_server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh',
-      ntfy_topic: $('ntfyTopicInput').value.trim(),
-      ntfy_token: $('ntfyTokenInput').value.trim() || null,
+      // Fields the environment owns are omitted, not saved: writing the env's
+      // value into config.json would leave a stale copy behind if the variable
+      // is later removed, and the token is never sent to the browser at all —
+      // saving it back would blank whatever is on disk.
+      ...(ntfyLocked('enabled') ? {} : { ntfy_enabled: $('ntfyEnabledCheckbox').checked }),
+      ...(ntfyLocked('server')  ? {} : { ntfy_server: $('ntfyServerInput').value.trim() || 'https://ntfy.sh' }),
+      ...(ntfyLocked('topic')   ? {} : { ntfy_topic: $('ntfyTopicInput').value.trim() }),
+      ...(ntfyLocked('token')   ? {} : { ntfy_token: $('ntfyTokenInput').value.trim() || null }),
       ntfy_on_scheduled_run: $('ntfyScheduledRunCheckbox').checked,
       ntfy_on_manual_run: $('ntfyManualRunCheckbox').checked,
       ntfy_on_success: $('ntfySuccessCheckbox').checked,

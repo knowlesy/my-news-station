@@ -875,6 +875,9 @@
               <button id="ntfyTestBtn" class="btn" type="button" style="background:var(--ctp-surface0); color:var(--ctp-text); height:30px; font-size:0.72rem; padding:0 0.7rem; white-space:nowrap;">Send test</button>
             </label>
 
+            <!-- Shown only when NTFY_* env vars are set on the server pod -->
+            <div id="ntfyEnvLockNote" style="display:none; font-size:0.68rem; color:var(--ctp-yellow); background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.45rem 0.6rem; line-height:1.45;"></div>
+
             <div style="display:flex; flex-direction:column; gap:0.3rem; margin-top:0.2rem;">
               <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; color:var(--ctp-text); font-size:0.78rem;">
                 <input type="checkbox" id="ntfyScheduledRunCheckbox" style="width:15px; height:15px; cursor:pointer;">

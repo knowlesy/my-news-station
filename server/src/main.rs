@@ -152,6 +152,15 @@ struct AppConfig {
     /// Notify when a failure looks like expired/invalid LLM credentials.
     #[serde(default = "default_true")]
     ntfy_on_token_expiry: bool,
+
+    /// Which ntfy connection fields the environment is currently overriding.
+    ///
+    /// Response-only: the UI uses it to lock those inputs, because editing them
+    /// would otherwise appear to save and then silently revert on reload — the
+    /// environment wins in `apply_ntfy_env_overrides`. Never read from
+    /// config.json, and never written back to it.
+    #[serde(default, skip_deserializing)]
+    ntfy_env_locked: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -331,6 +340,7 @@ impl Default for AppConfig {
             ntfy_on_success: true,
             ntfy_on_failure: true,
             ntfy_on_token_expiry: true,
+            ntfy_env_locked: Vec::new(),
         }
     }
 }
@@ -585,6 +595,19 @@ async fn handle_get_config(
     // Show the settings that are actually in force, so the UI does not display
     // an empty topic while the environment is driving real notifications.
     apply_ntfy_env_overrides(&mut config);
+
+    // Tell the UI which fields it must not let the user edit: the environment
+    // wins on every read, so an edit here would save and then silently revert.
+    config.ntfy_env_locked = [
+        ("NTFY_SERVER", "server"),
+        ("NTFY_TOPIC", "topic"),
+        ("NTFY_TOKEN", "token"),
+        ("NTFY_ENABLED", "enabled"),
+    ]
+    .iter()
+    .filter(|(var, _)| std::env::var(var).is_ok_and(|v| !v.trim().is_empty()))
+    .map(|(_, field)| field.to_string())
+    .collect();
 
     // Never hand an environment-supplied token to a browser: it comes from the
     // secret store, not from this user, and config.json is world-readable to
@@ -847,10 +870,17 @@ async fn notify(data_dir: &std::path::Path, msg: NtfyMessage) {
 
 /// Body of the `POST /api/ntfy/test` request. Carries the values currently in
 /// the Settings form, so the user can verify a connection before saving it.
+/// Every field is optional so the UI can omit the ones the environment owns:
+/// those inputs are locked and (for the token) never populated, so sending them
+/// would test a blank credential and report a failure that does not reflect how
+/// real notifications are sent.
 #[derive(Deserialize)]
 struct NtfyTestRequest {
-    server: String,
-    topic: String,
+    #[serde(default)]
+    server: Option<String>,
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
     token: Option<String>,
 }
 
@@ -861,14 +891,26 @@ struct NtfyTestResponse {
 }
 
 /// `POST /api/ntfy/test` — send a one-off test notification.
-async fn handle_ntfy_test(Json(req): Json<NtfyTestRequest>) -> Json<NtfyTestResponse> {
+async fn handle_ntfy_test(
+    State(state): State<AppState>,
+    Json(req): Json<NtfyTestRequest>,
+) -> Json<NtfyTestResponse> {
+    // Fall back to the settings actually in force for anything the form did not
+    // supply, so a test exercises the same values a real notification would.
+    let effective = load_app_config(&state.data_dir);
+    let non_empty = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    let server = non_empty(req.server).unwrap_or(effective.ntfy_server);
+    let topic = non_empty(req.topic).unwrap_or(effective.ntfy_topic);
+    let token = non_empty(req.token).or(effective.ntfy_token);
+
     let msg = NtfyMessage {
         title: "Daily News Station".to_string(),
         body: "Test notification — ntfy is wired up correctly.".to_string(),
         priority: 3,
         tags: "newspaper",
     };
-    match ntfy_publish(&req.server, &req.topic, req.token.as_deref(), &msg).await {
+    match ntfy_publish(&server, &topic, token.as_deref(), &msg).await {
         Ok(()) => Json(NtfyTestResponse { ok: true, error: None }),
         Err(e) => {
             warn!("ntfy test failed: {}", e);
