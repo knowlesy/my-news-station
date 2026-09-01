@@ -46,7 +46,7 @@ RUN touch src/main.rs && cargo build --release
 #
 # The image removes /usr/lib/python3.12/EXTERNALLY-MANAGED, so PEP 668
 # does not block `pip install` into the system interpreter below.
-FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 
 # Build identity — passed via --build-arg from CI, surfaced at /api/version
 ARG GIT_SHA=dev
