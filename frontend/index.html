@@ -940,7 +940,7 @@
 
         <!-- Action buttons -->
         <div style="display:flex; justify-content:flex-end; align-items:center; gap:0.75rem; border-top:1px solid var(--ctp-surface0); padding-top:0.75rem;">
-          <button id="showLogsModalBtn" class="btn" style="background:var(--ctp-surface1); color:var(--ctp-text); display:flex; align-items:center; gap:0.35rem;">📋 View Logs</button>
+          <button id="showLogsModalBtn" class="btn" style="background:var(--ctp-surface1); color:var(--ctp-text); display:flex; align-items:center; gap:0.35rem;">📋 View Logs & History</button>
           <span id="versionDisplay" title="Build identity of the running image" style="margin-right:auto; font-size:0.68rem; color:var(--ctp-surface2); font-family:monospace;"></span>
           <button id="cancelOptionsBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text);">Cancel</button>
           <button id="saveOptionsBtn" class="btn btn-primary">Save Settings</button>
@@ -954,16 +954,26 @@
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--ctp-surface0); padding-bottom:0.75rem;">
           <span style="font-weight:600; font-size:1.1rem; color:var(--ctp-text); display:flex; align-items:center; gap:0.4rem;">
             <span style="width:10px; height:10px; border-radius:50%; background:var(--ctp-yellow); display:inline-block;" id="modalConsoleStatusDot"></span>
-            📋 Scraper Execution Logs
+            📋 Scraper Logs & History
           </span>
           <button id="closeLogsModalBtn" style="background:transparent; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:1.2rem; margin-left:auto; outline:none;" aria-label="Close logs">✕</button>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem; background:var(--ctp-mantle); padding:0.4rem 0.6rem; border-radius:8px; border:1px solid var(--ctp-surface0);">
+          <label for="historyRunSelect" style="font-size:0.75rem; color:var(--ctp-subtext0); font-weight:500; white-space:nowrap;">Select Run:</label>
+          <select id="historyRunSelect" style="flex:1; background:var(--ctp-base); color:var(--ctp-text); border:1px solid var(--ctp-surface0); border-radius:6px; padding:0.3rem 0.5rem; font-size:0.75rem; outline:none; cursor:pointer;">
+            <option value="live">● Current / Live Run</option>
+          </select>
         </div>
         
         <pre id="modalConsoleLogOutput" style="margin:0; height:320px; overflow-y:auto; font-family:monospace; font-size:0.75rem; color:var(--ctp-text); line-height:1.4; white-space:pre-wrap; word-break:break-all; padding:0.5rem; background:var(--ctp-base); border:1px solid var(--ctp-surface0); border-radius:8px; scrollbar-width:thin;"></pre>
         
-        <div style="display:flex; justify-content:flex-end; gap:0.75rem; border-top:1px solid var(--ctp-surface0); padding-top:0.75rem;">
-          <button id="modalLogsRefreshBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text); display:flex; align-items:center; gap:0.3rem;">🔄 Refresh</button>
-          <button id="closeLogsModalOkBtn" class="btn btn-primary">Close</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--ctp-surface0); padding-top:0.75rem;">
+          <button id="modalLogsCopyBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text); display:flex; align-items:center; gap:0.3rem;">📋 Copy</button>
+          <div style="display:flex; gap:0.75rem;">
+            <button id="modalLogsRefreshBtn" class="btn" style="background:var(--ctp-surface0); color:var(--ctp-text); display:flex; align-items:center; gap:0.3rem;">🔄 Refresh</button>
+            <button id="closeLogsModalOkBtn" class="btn btn-primary">Close</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1003,7 +1013,10 @@
           <span style="width:8px; height:8px; border-radius:50%; background:var(--ctp-yellow); display:inline-block;" id="consoleStatusDot"></span>
           Execution Logs
         </span>
-        <button id="toggleConsoleBtn" style="background:none; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:0.7rem; outline:none;">Collapse</button>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button id="copyConsoleBtn" style="background:none; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:0.7rem; outline:none; display:flex; align-items:center; gap:0.25rem;">📋 Copy</button>
+          <button id="toggleConsoleBtn" style="background:none; border:none; color:var(--ctp-subtext0); cursor:pointer; font-size:0.7rem; outline:none;">Collapse</button>
+        </div>
       </div>
       <pre id="consoleLogOutput" style="margin:0; max-height:180px; overflow-y:auto; font-family:monospace; font-size:0.7rem; color:var(--ctp-text); line-height:1.4; white-space:pre-wrap; word-break:break-all; padding:0.25rem 0; scrollbar-width:thin;"></pre>
     </div>

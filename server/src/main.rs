@@ -722,6 +722,86 @@ async fn handle_scrape_logs(
     Json(logs.iter().cloned().collect())
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RunHistoryEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub label: String,
+    pub trigger: String,
+    pub success: bool,
+    pub lines: Vec<String>,
+}
+
+/// Persist a completed run to scrape_history.json, keeping at most 10 recent runs.
+/// Lines are sanitized to strip huge API dumps or tokens.
+fn record_run_history(
+    data_dir: &std::path::Path,
+    id: String,
+    label: String,
+    trigger: String,
+    success: bool,
+    raw_lines: &[String],
+) {
+    let path = data_dir.join("scrape_history.json");
+    let mut history: Vec<RunHistoryEntry> = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Sanitize lines: cap line length to 500 chars to avoid prompt/payload dumps
+    let sanitized_lines: Vec<String> = raw_lines
+        .iter()
+        .map(|line| {
+            if line.len() > 500 {
+                format!("{}… [payload truncated, {} chars total]", &line[..400], line.len())
+            } else {
+                line.clone()
+            }
+        })
+        .collect();
+
+    let entry = RunHistoryEntry {
+        id,
+        timestamp: Utc::now().to_rfc3339(),
+        label,
+        trigger,
+        success,
+        lines: sanitized_lines,
+    };
+
+    history.push(entry);
+    // Retain only the last 10 runs
+    if history.len() > 10 {
+        let excess = history.len() - 10;
+        history.drain(0..excess);
+    }
+
+    if let Ok(json) = serde_json::to_string_pretty(&history) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// `GET /api/scrape/history` — returns the last 10 historical scrape runs.
+async fn handle_scrape_history(
+    State(state): State<AppState>,
+) -> Json<Vec<RunHistoryEntry>> {
+    let path = state.data_dir.join("scrape_history.json");
+    let history: Vec<RunHistoryEntry> = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Json(history)
+}
+
+
 #[derive(Deserialize)]
 struct TriggerParams {
     voice_short: Option<String>,
@@ -971,7 +1051,7 @@ fn pump_child_stream<R>(
 /// What kicked off a scraper run. Only used to decide which ntfy "started"
 /// toggle applies — scheduled and manual runs are opt-in separately, since a
 /// manual run's result is already visible on screen.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum RunTrigger {
     Scheduled,
     Manual,
@@ -1081,9 +1161,17 @@ fn spawn_scraper_job(
         time::sleep(time::Duration::from_millis(250)).await;
 
         let success = state.last_run_success.load(Ordering::SeqCst);
+        let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+        record_run_history(
+            &state.data_dir,
+            format!("local-{}", Utc::now().format("%Y%m%d-%H%M%S")),
+            label.to_string(),
+            format!("{:?}", trigger),
+            success,
+            &lines,
+        );
         let cfg = load_app_config(&state.data_dir);
         if cfg.ntfy_enabled {
-            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
             let msg = if success {
                 cfg.ntfy_on_success.then(|| NtfyMessage {
                     title: "News run complete".to_string(),
@@ -1319,6 +1407,7 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
         if file_name == "config.json"
             || file_name == "scraped_urls.json"
             || file_name == "source_activity.json"
+            || file_name == "scrape_history.json"
             || file_name.starts_with('.')
         {
             continue;
@@ -1733,9 +1822,17 @@ fn spawn_k8s_job(
 
         // ── ntfy: completion ───────────────────────────────────────────
         time::sleep(time::Duration::from_millis(250)).await;
+        let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+        record_run_history(
+            &state.data_dir,
+            job_name.clone(),
+            label.to_string(),
+            format!("{:?}", trigger),
+            success,
+            &lines,
+        );
         let cfg = load_app_config(&state.data_dir);
         if cfg.ntfy_enabled {
-            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
             let msg = if success {
                 cfg.ntfy_on_success.then(|| NtfyMessage {
                     title: "News run complete".to_string(),
@@ -1931,11 +2028,20 @@ async fn cronjob_watcher_loop(state: AppState) {
                 .await;
             }
 
+            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
+            record_run_history(
+                &state.data_dir,
+                name.clone(),
+                "daily scheduled run".to_string(),
+                "cron".to_string(),
+                success,
+                &lines,
+            );
+
             let cfg = load_app_config(&state.data_dir);
             if !cfg.ntfy_enabled {
                 continue;
             }
-            let lines: Vec<String> = state.scraper_logs.lock().await.iter().cloned().collect();
             let msg = if success {
                 cfg.ntfy_on_success.then(|| NtfyMessage {
                     title: "News run complete".to_string(),
@@ -2159,6 +2265,7 @@ async fn main() {
         .route("/api/scrape/trigger", post(handle_scrape_trigger))
         .route("/api/scrape/regen-audio", post(handle_regen_audio))
         .route("/api/scrape/logs", get(handle_scrape_logs))
+        .route("/api/scrape/history", get(handle_scrape_history))
         .route("/api/tts/preview", get(handle_tts_preview))
         .route("/api/ntfy/test", post(handle_ntfy_test))
         // Serve generated media (EPUB + MP3) under /media/
@@ -2348,5 +2455,35 @@ mod tests {
         // Old media files must be deleted
         assert!(!old_epub.exists(), "old epub should be deleted");
         assert!(!old_mp3.exists(), "old mp3 should be deleted");
+    }
+
+    #[test]
+    fn test_record_run_history_caps_at_10_and_sanitizes() {
+        let tmp = TempDir::new("scrape_history_test");
+        let huge_line = "A".repeat(1000);
+
+        for i in 1..=15 {
+            record_run_history(
+                &tmp.0,
+                format!("run-{}", i),
+                "test run".to_string(),
+                "manual".to_string(),
+                i % 2 == 0,
+                &[format!("Line 1 of run {}", i), huge_line.clone()],
+            );
+        }
+
+        let history_file = tmp.0.join("scrape_history.json");
+        assert!(history_file.exists());
+        let history: Vec<RunHistoryEntry> = serde_json::from_str(&std::fs::read_to_string(&history_file).unwrap()).unwrap();
+
+        // Exactly 10 runs retained (runs 6 to 15)
+        assert_eq!(history.len(), 10);
+        assert_eq!(history[0].id, "run-6");
+        assert_eq!(history[9].id, "run-15");
+
+        // Huge line was sanitized / truncated
+        assert!(history[9].lines[1].contains("payload truncated"));
+        assert!(history[9].lines[1].len() < 500);
     }
 }

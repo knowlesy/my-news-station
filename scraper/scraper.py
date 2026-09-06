@@ -48,7 +48,7 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "claude_cli")
 GOOGLE_AI_KEY   = os.getenv("GOOGLE_AI_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL    = os.getenv("CLAUDE_MODEL", "claude-opus-4-5")
-GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ── News sources ─────────────────────────────────────────────────
 # Sources are OWNED by config.json (data dir). The web server materialises the
@@ -252,8 +252,7 @@ def call_gemini(prompt: str) -> str:
         if resp.status_code == 404:
             raise RuntimeError(
                 f"Gemini model '{GEMINI_MODEL}' not found (404).\n"
-                f"'gemini-1.5-pro' is deprecated — use 'gemini-2.0-flash'.\n"
-                f"Set GEMINI_MODEL=gemini-2.0-flash in your .env file."
+                f"Try setting GEMINI_MODEL=gemini-2.5-flash in your .env / Secret."
             )
         if resp.status_code in (429, 500, 503) and attempt < len(delays):
             delay = delays[attempt]

@@ -56,7 +56,9 @@ async function refreshLogs() {
       consoleLogOutput.textContent = text;
       consoleLogOutput.scrollTop = consoleLogOutput.scrollHeight;
     }
-    if (logsModal.style.display === 'flex' && modalConsoleLogOutput.textContent !== text) {
+    const runSelect = $('historyRunSelect');
+    const isViewingLive = !runSelect || runSelect.value === 'live';
+    if (logsModal.style.display === 'flex' && isViewingLive && modalConsoleLogOutput.textContent !== text) {
       modalConsoleLogOutput.textContent = text;
       modalConsoleLogOutput.scrollTop = modalConsoleLogOutput.scrollHeight;
     }
@@ -226,11 +228,91 @@ async function triggerRegenAudio(dateStr, type) {
 // player cards (see playlist.js renderAudioPlayer)
 window.triggerRegenAudio = triggerRegenAudio;
 
-// ── Logs Modal Overlay ───────────────────────────────────────────
+// ── Clipboard Copy Helper ─────────────────────────────────────────
+async function copyToClipboard(text, btn) {
+  if (!text || !text.trim()) {
+    toast('No logs to copy', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ Copied!';
+    setTimeout(() => { btn.innerHTML = orig; }, 2000);
+    toast('Logs copied to clipboard', 'success');
+  } catch (err) {
+    console.error('Copy failed:', err);
+    toast('Failed to copy to clipboard', 'error');
+  }
+}
+
+// ── Logs Modal & History Overlay ─────────────────────────────────
 let logsModalInterval = null;
+let currentHistoryRuns = [];
+
+async function loadScrapeHistory() {
+  const select = $('historyRunSelect');
+  if (!select) return;
+  try {
+    const resp = await fetch('/api/scrape/history');
+    if (!resp.ok) return;
+    currentHistoryRuns = await resp.json();
+
+    const currentVal = select.value;
+    select.innerHTML = '<option value="live">● Current / Live Run</option>';
+
+    // Newest runs first
+    [...currentHistoryRuns].reverse().forEach((run) => {
+      const opt = document.createElement('option');
+      opt.value = run.id;
+      const statusIcon = run.success ? '🟢' : '🔴';
+      let dateStr = run.timestamp;
+      try {
+        const d = new Date(run.timestamp);
+        dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+                  d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      } catch (_) {}
+      opt.textContent = `${statusIcon} ${dateStr} — ${run.label}${run.success ? '' : ' (Failed)'}`;
+      select.appendChild(opt);
+    });
+
+    if (currentVal && select.querySelector(`option[value="${currentVal}"]`)) {
+      select.value = currentVal;
+    }
+  } catch (err) {
+    console.error('Failed to load scrape history:', err);
+  }
+}
+
+async function handleHistorySelectChange() {
+  const select = $('historyRunSelect');
+  if (!select) return;
+  const val = select.value;
+
+  if (val === 'live') {
+    if (!logsModalInterval && logsModal.style.display === 'flex') {
+      logsModalInterval = setInterval(refreshLogs, 2000);
+    }
+    await refreshLogs();
+  } else {
+    if (logsModalInterval) {
+      clearInterval(logsModalInterval);
+      logsModalInterval = null;
+    }
+    const run = currentHistoryRuns.find(r => r.id === val);
+    if (run) {
+      modalConsoleLogOutput.textContent = run.lines.join('\n') || '(no logs recorded)';
+      modalConsoleStatusDot.style.background = run.success ? 'var(--ctp-green)' : 'var(--ctp-red)';
+      modalConsoleLogOutput.scrollTop = 0;
+    }
+  }
+}
 
 function openLogsModal() {
   logsModal.style.display = 'flex';
+  const select = $('historyRunSelect');
+  if (select) select.value = 'live';
+  loadScrapeHistory();
   refreshLogs();
   logsModalInterval = setInterval(refreshLogs, 2000);
 }
@@ -246,7 +328,26 @@ function closeLogsModal() {
 $('showLogsModalBtn').addEventListener('click', openLogsModal);
 $('closeLogsModalBtn').addEventListener('click', closeLogsModal);
 $('closeLogsModalOkBtn').addEventListener('click', closeLogsModal);
-$('modalLogsRefreshBtn').addEventListener('click', refreshLogs);
+$('modalLogsRefreshBtn').addEventListener('click', () => {
+  loadScrapeHistory();
+  refreshLogs();
+});
+
+const historyRunSelect = $('historyRunSelect');
+if (historyRunSelect) {
+  historyRunSelect.addEventListener('change', handleHistorySelectChange);
+}
+
+const copyConsoleBtn = $('copyConsoleBtn');
+if (copyConsoleBtn) {
+  copyConsoleBtn.addEventListener('click', () => copyToClipboard(consoleLogOutput.textContent, copyConsoleBtn));
+}
+
+const modalLogsCopyBtn = $('modalLogsCopyBtn');
+if (modalLogsCopyBtn) {
+  modalLogsCopyBtn.addEventListener('click', () => copyToClipboard(modalConsoleLogOutput.textContent, modalLogsCopyBtn));
+}
 
 // Poll status every 3 seconds
 setInterval(checkScraperStatus, 3000);
+
