@@ -48,7 +48,7 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "claude_cli")
 GOOGLE_AI_KEY   = os.getenv("GOOGLE_AI_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL    = os.getenv("CLAUDE_MODEL", "claude-opus-4-5")
-GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ── News sources ─────────────────────────────────────────────────
 # Sources are OWNED by config.json (data dir). The web server materialises the
@@ -256,11 +256,15 @@ def call_gemini(prompt: str) -> str:
                 f"Set GEMINI_MODEL=gemini-2.0-flash in your .env file."
             )
         if resp.status_code in (429, 500, 503) and attempt < len(delays):
+            delay = delays[attempt]
+            match = re.search(r"retry in (\d+(?:\.\d+)?)s", resp.text, re.IGNORECASE)
+            if match:
+                delay = max(delay, int(float(match.group(1)) + 3.0))
             log.warning(
                 "Transient Gemini error %d — retrying in %ds (attempt %d/%d)",
-                resp.status_code, delays[attempt], attempt + 1, len(delays),
+                resp.status_code, delay, attempt + 1, len(delays),
             )
-            time.sleep(delays[attempt])
+            time.sleep(delay)
             continue
         resp.raise_for_status()
 
