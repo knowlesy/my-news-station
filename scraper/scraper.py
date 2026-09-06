@@ -156,10 +156,16 @@ def load_config() -> None:
 
     cfg = load_json(CONFIG_PATH, None)
     if cfg is None:
-        raise SystemExit(
-            f"config.json not found at {CONFIG_PATH}. Start the web server once "
-            f"(it writes the default config), or create the file manually."
-        )
+        seed_path = Path(os.getenv("SEED_CONFIG", "/app/seed-config.json"))
+        cfg = load_json(seed_path, None)
+        if cfg is not None:
+            log.warning("config.json not found at %s — restored from seed config %s", CONFIG_PATH, seed_path)
+            save_json(CONFIG_PATH, cfg)
+        else:
+            raise SystemExit(
+                f"config.json not found at {CONFIG_PATH}. Start the web server once "
+                f"(it writes the default config), or create the file manually."
+            )
 
     RSS_FEEDS = [
         feed for item in cfg.get("rss_feeds", [])

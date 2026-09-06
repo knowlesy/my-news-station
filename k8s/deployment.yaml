@@ -286,6 +286,10 @@ spec:
                   mountPath: /app/data
                 - name: claude-creds
                   mountPath: /root/.claude
+                - name: seed-config
+                  mountPath: /app/seed-config.json
+                  subPath: seed-config.json
+                  readOnly: true
 
               resources:
                 requests:
@@ -302,3 +306,8 @@ spec:
             - name: claude-creds
               persistentVolumeClaim:
                 claimName: claude-creds-pvc
+            - name: seed-config
+              configMap:
+                name: news-seed-config
+                optional: true
+

@@ -193,8 +193,23 @@ fn default_ntfy_server() -> String {
 }
 
 /// Read config.json from disk, returning defaults on any error.
+/// If config.json is absent on disk, materialises it so downstream components
+/// (like the CronJob scraper) never fail on a missing file.
 fn load_app_config(data_dir: &std::path::Path) -> AppConfig {
     let path = data_dir.join("config.json");
+    if !path.exists() {
+        let seed_path = std::path::PathBuf::from(
+            std::env::var("SEED_CONFIG").unwrap_or_else(|_| "/app/seed-config.json".to_string()),
+        );
+        let content = std::fs::read_to_string(&seed_path).ok().filter(|s| {
+            serde_json::from_str::<AppConfig>(s).is_ok()
+        }).unwrap_or_else(|| {
+            serde_json::to_string_pretty(&AppConfig::default()).unwrap_or_default()
+        });
+        if !content.is_empty() {
+            let _ = std::fs::write(&path, &content);
+        }
+    }
     let mut cfg = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
@@ -1296,6 +1311,28 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
             continue;
         }
 
+        let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        // NEVER delete configuration, registry, or state metadata files
+        if file_name == "config.json"
+            || file_name == "scraped_urls.json"
+            || file_name == "source_activity.json"
+            || file_name.starts_with('.')
+        {
+            continue;
+        }
+
+        // Only clean up generated media files and temporary snapshots
+        let is_deletable = file_name.ends_with(".epub")
+            || file_name.ends_with(".mp3")
+            || file_name.starts_with("articles-")
+            || file_name.starts_with("preview-");
+        if !is_deletable {
+            continue;
+        }
+
         let modified: DateTime<Utc> = match entry.metadata().and_then(|m| m.modified()) {
             Ok(sys_time) => sys_time.into(),
             Err(e) => {
@@ -1312,6 +1349,7 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
         }
     }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 // KUBERNETES JOB RUNNER  (active when SCRAPE_RUNNER=k8s)
@@ -2282,5 +2320,33 @@ mod tests {
         for k in ["NTFY_SERVER", "NTFY_TOPIC", "NTFY_TOKEN", "NTFY_ENABLED"] {
             std::env::remove_var(k);
         }
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_config_and_state_files() {
+        let tmp = TempDir::new("cleanup_preserves_config");
+        let config_file = tmp.0.join("config.json");
+        let urls_file = tmp.0.join("scraped_urls.json");
+        let activity_file = tmp.0.join("source_activity.json");
+        let old_epub = tmp.0.join("daily-news-20200101-000000.epub");
+        let old_mp3 = tmp.0.join("short-radio-20200101-000000.mp3");
+
+        std::fs::write(&config_file, "{}").unwrap();
+        std::fs::write(&urls_file, "[]").unwrap();
+        std::fs::write(&activity_file, "{}").unwrap();
+        std::fs::write(&old_epub, "epub content").unwrap();
+        std::fs::write(&old_mp3, "mp3 content").unwrap();
+
+        // Run cleanup with max_age_days = -1 so every file is older than cutoff
+        cleanup_old_files(&tmp.0, -1).await;
+
+        // Configuration and state files must survive
+        assert!(config_file.exists(), "config.json must never be deleted by cleanup");
+        assert!(urls_file.exists(), "scraped_urls.json must never be deleted by cleanup");
+        assert!(activity_file.exists(), "source_activity.json must never be deleted by cleanup");
+
+        // Old media files must be deleted
+        assert!(!old_epub.exists(), "old epub should be deleted");
+        assert!(!old_mp3.exists(), "old mp3 should be deleted");
     }
 }
