@@ -27,12 +27,6 @@
   "enable_radio": true,
   "enable_podcast": true,
   "enable_tldr": true,
-  "enable_broadsheet_edition": false,
-  "editions": {
-    "broadsheet": {
-      "enabled": false
-    }
-  },
 
   "source_health_dead_days": 30,
   "daily_run_hour": 6,

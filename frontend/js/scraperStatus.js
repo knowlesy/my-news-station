@@ -185,11 +185,10 @@ async function triggerRegenAudio(dateStr, type) {
     btn.innerHTML = '⏳ Regenerating…';
   }
 
-  const isBookTarget = type === 'epub' || type === 'tldr' || type === 'broadsheet';
+  const isBookTarget = type === 'epub' || type === 'tldr';
   const restoreLabel = isBookTarget ? '🔁 Rebuild' : '🔁 Re-generate';
   const runningMsg =
     type === 'epub' ? 'Rebuilding EPUB from saved articles — no AI call…'
-    : type === 'broadsheet' ? 'Rebuilding Broadsheet PDF print edition…'
     : type === 'tldr' ? 'Re-summarizing TLDR digest — LLM running…'
     : 'Re-generating audio — LLM + TTS running…';
 
@@ -198,8 +197,8 @@ async function triggerRegenAudio(dateStr, type) {
 
   const qParams = new URLSearchParams({ date: dateStr });
   // Only regenerate the clicked target — audio tracks leave the other MP3
-  // untouched; epub/broadsheet rebuild without any LLM call; tldr re-summarizes only.
-  if (['radio', 'podcast', 'epub', 'tldr', 'broadsheet'].includes(type)) qParams.set('track', type);
+  // untouched; epub rebuilds without any LLM call; tldr re-summarizes only.
+  if (['radio', 'podcast', 'epub', 'tldr'].includes(type)) qParams.set('track', type);
   qParams.set('voice_short', $('voiceShortSelect').value);
   qParams.set('voice_long', $('voiceLongSelect').value);
   if (shortSources.length) qParams.set('short_sources', shortSources.join(','));

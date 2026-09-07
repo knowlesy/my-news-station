@@ -82,7 +82,6 @@ export function renderPlaylist() {
     }
     if (entry.epub) badgesHtml += '<span class="badge">📖 Book</span>';
     if (entry.tldr) badgesHtml += '<span class="badge">⚡ TLDR</span>';
-    if (entry.broadsheet) badgesHtml += '<span class="badge">📰 Broadsheet</span>';
     if (entry.radio) badgesHtml += '<span class="badge">📻 Radio</span>';
     if (entry.podcast) badgesHtml += '<span class="badge">🎧 Podcast</span>';
 
@@ -140,26 +139,10 @@ export function selectDate(dateStr) {
     epubRegenBtn.style.display = entry.epub ? '' : 'none';
     epubRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'epub');
   }
-  const broadsheetRegenBtn = $('regenBtn-broadsheet');
-  if (broadsheetRegenBtn) {
-    broadsheetRegenBtn.style.display = entry.epub ? '' : 'none';
-    broadsheetRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'broadsheet');
-  }
   const tldrRegenBtn = $('regenBtn-tldr');
   if (tldrRegenBtn) {
     tldrRegenBtn.style.display = entry.epub ? '' : 'none';
     tldrRegenBtn.onclick = () => window.triggerRegenAudio(dateStr, 'tldr');
-  }
-
-  const broadsheetBtn = $('broadsheetDownloadBtn');
-  if (broadsheetBtn) {
-    if (entry.broadsheet) {
-      broadsheetBtn.href = `/media/${encodeURIComponent(entry.broadsheet)}`;
-      broadsheetBtn.download = entry.broadsheet;
-      broadsheetBtn.style.display = 'inline-flex';
-    } else {
-      broadsheetBtn.style.display = 'none';
-    }
   }
 }
 

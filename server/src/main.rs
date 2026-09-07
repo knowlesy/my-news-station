@@ -51,29 +51,15 @@ struct AppState {
 #[derive(Debug, Serialize, Deserialize)]
 struct MediaEntry {
     /// Date string in YYYYMMDD format, e.g. "20260628"
-    date:       String,
+    date:    String,
     /// Filename of the EPUB book, if generated for this date
-    epub:       Option<String>,
+    epub:    Option<String>,
     /// Filename of the companion TLDR digest EPUB, if generated
-    tldr:       Option<String>,
+    tldr:    Option<String>,
     /// Filename of the short radio briefing MP3, if generated
-    radio:      Option<String>,
+    radio:   Option<String>,
     /// Filename of the long podcast MP3, if generated
-    podcast:    Option<String>,
-    /// Filename of the broadsheet newspaper PDF, if generated
-    broadsheet: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-struct BroadsheetConfig {
-    #[serde(default)]
-    enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-struct EditionsConfig {
-    #[serde(default)]
-    broadsheet: BroadsheetConfig,
+    podcast: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,11 +110,6 @@ struct AppConfig {
     enable_podcast: bool,
     #[serde(default = "default_true")]
     enable_tldr: bool,
-    /// Optional broadsheet newspaper print edition toggle
-    #[serde(default)]
-    enable_broadsheet_edition: bool,
-    #[serde(default)]
-    editions: Option<EditionsConfig>,
     /// Days without activity before a source is flagged as dead in the health panel.
     #[serde(default = "default_source_health_dead_days")]
     source_health_dead_days: u32,
@@ -362,8 +343,6 @@ impl Default for AppConfig {
             enable_radio: true,
             enable_podcast: true,
             enable_tldr: true,
-            enable_broadsheet_edition: false,
-            editions: None,
             source_health_dead_days: 30,
             daily_run_hour: 6,
             daily_run_minute: 0,
@@ -379,25 +358,6 @@ impl Default for AppConfig {
             ntfy_on_token_expiry: true,
             ntfy_env_locked: Vec::new(),
         }
-    }
-}
-
-impl AppConfig {
-    pub fn is_broadsheet_enabled(&self) -> bool {
-        if let Ok(val) = std::env::var("ENABLE_BROADSHEET_EDITION") {
-            let v = val.trim().to_ascii_lowercase();
-            if matches!(v.as_str(), "1" | "true" | "yes" | "on") {
-                return true;
-            } else if matches!(v.as_str(), "0" | "false" | "no" | "off") {
-                return false;
-            }
-        }
-        if let Some(ref editions) = self.editions {
-            if editions.broadsheet.enabled {
-                return true;
-            }
-        }
-        self.enable_broadsheet_edition
     }
 }
 
@@ -436,7 +396,7 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
         let file_name = entry.file_name().to_string_lossy().to_string();
 
         // Only process recognised file types
-        if !file_name.ends_with(".epub") && !file_name.ends_with(".mp3") && !file_name.ends_with(".pdf") {
+        if !file_name.ends_with(".epub") && !file_name.ends_with(".mp3") {
             continue;
         }
 
@@ -447,12 +407,11 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
         };
 
         let media = groups.entry(date.clone()).or_insert_with(|| MediaEntry {
-            date:       date.clone(),
-            epub:       None,
-            tldr:       None,
-            radio:      None,
-            podcast:    None,
-            broadsheet: None,
+            date:    date.clone(),
+            epub:    None,
+            tldr:    None,
+            radio:   None,
+            podcast: None,
         });
 
         if file_name.starts_with("daily-news-") && file_name.ends_with(".epub") {
@@ -463,8 +422,6 @@ fn list_media_files(data_dir: &Path) -> Vec<MediaEntry> {
             }
         } else if file_name.starts_with("daily-tldr-") && file_name.ends_with(".epub") {
             media.tldr = Some(file_name);
-        } else if (file_name.starts_with("daily-broadsheet-") || file_name.ends_with("-broadsheet.pdf")) && file_name.ends_with(".pdf") {
-            media.broadsheet = Some(file_name);
         } else if file_name.starts_with("short-radio-") && file_name.ends_with(".mp3") {
             media.radio = Some(file_name);
         } else if file_name.starts_with("long-podcast-") && file_name.ends_with(".mp3") {
@@ -532,42 +489,30 @@ async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse,
     // Honour the Settings toggle — read fresh each request so flipping it
     // takes effect immediately, no restart needed.
     let config_path = state.data_dir.join("config.json");
-    let cfg = std::fs::read_to_string(&config_path)
+    let enabled = std::fs::read_to_string(&config_path)
         .ok()
         .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
-        .unwrap_or_default();
-    if !cfg.opds_enabled {
+        .map(|c| c.opds_enabled)
+        .unwrap_or(true);
+    if !enabled {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    let broadsheet_enabled = cfg.is_broadsheet_enabled();
-
-    // (filename, modified) for every epub and optional broadsheet in the data dir
+    // (filename, modified) for every epub in the data dir
     let mut books: Vec<(String, DateTime<Utc>)> = Vec::new();
-    let mut broadsheets: Vec<(String, DateTime<Utc>)> = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(&*state.data_dir) {
         for entry in read_dir.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            if file_name.ends_with(".epub") {
-                let mtime = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .map(DateTime::<Utc>::from)
-                    .unwrap_or_else(Utc::now);
-                books.push((file_name, mtime));
-            } else if broadsheet_enabled
-                && (file_name.starts_with("daily-broadsheet-") || file_name.ends_with("-broadsheet.pdf"))
-                && file_name.ends_with(".pdf")
-            {
-                let mtime = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .map(DateTime::<Utc>::from)
-                    .unwrap_or_else(Utc::now);
-                broadsheets.push((file_name, mtime));
+            if !file_name.ends_with(".epub") {
+                continue;
             }
+            let mtime = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(DateTime::<Utc>::from)
+                .unwrap_or_else(Utc::now);
+            books.push((file_name, mtime));
         }
     }
     // E-readers are offline: prefer the -x4 variant (images stripped) and
@@ -580,94 +525,45 @@ async fn handle_opds(State(state): State<AppState>) -> Result<impl IntoResponse,
             || !names.contains(&n.replace(".epub", "-x4.epub"))
     });
     books.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
-    broadsheets.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
 
-    let latest_book = books.first().map(|(_, m)| *m);
-    let latest_broadsheet = broadsheets.first().map(|(_, m)| *m);
-    let feed_updated = match (latest_book, latest_broadsheet) {
-        (Some(b), Some(s)) => b.max(s),
-        (Some(b), None) => b,
-        (None, Some(s)) => s,
-        (None, None) => Utc::now(),
-    }
-    .to_rfc3339();
+    let feed_updated = books
+        .first()
+        .map(|(_, m)| *m)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339();
 
     let date_re = Regex::new(r"\d{8}").expect("Invalid date regex");
     let mut entries = String::new();
-
-    enum OpdsItem {
-        Epub { file_name: String, mtime: DateTime<Utc> },
-        Broadsheet { file_name: String, mtime: DateTime<Utc> },
-    }
-    let mut all_items: Vec<OpdsItem> = Vec::new();
-    for (file_name, mtime) in books {
-        all_items.push(OpdsItem::Epub { file_name, mtime });
-    }
-    for (file_name, mtime) in broadsheets {
-        all_items.push(OpdsItem::Broadsheet { file_name, mtime });
-    }
-    all_items.sort_by(|a, b| {
-        let ma = match a {
-            OpdsItem::Epub { mtime, .. } | OpdsItem::Broadsheet { mtime, .. } => *mtime,
+    for (file_name, mtime) in &books {
+        // Compact titles — e-reader lists truncate long ones, and the date
+        // is the part that matters: yymmdd-news-ai / yymmdd-newsTLDR-ai
+        let title = match date_re.find(file_name) {
+            Some(m) => {
+                let yymmdd = &m.as_str()[2..];
+                if file_name.starts_with("daily-tldr-") {
+                    format!("{}-newsTLDR-ai", yymmdd)
+                } else {
+                    format!("{}-news-ai", yymmdd)
+                }
+            }
+            None => file_name.clone(),
         };
-        let mb = match b {
-            OpdsItem::Epub { mtime, .. } | OpdsItem::Broadsheet { mtime, .. } => *mtime,
-        };
-        mb.cmp(&ma)
-    });
-
-    for item in &all_items {
-        match item {
-            OpdsItem::Epub { file_name, mtime } => {
-                let title = match date_re.find(file_name) {
-                    Some(m) => {
-                        let yymmdd = &m.as_str()[2..];
-                        if file_name.starts_with("daily-tldr-") {
-                            format!("{}-newsTLDR-ai", yymmdd)
-                        } else {
-                            format!("{}-news-ai", yymmdd)
-                        }
-                    }
-                    None => file_name.clone(),
-                };
-                entries.push_str(&format!(
-                    r#"  <entry>
+        // No per-entry <author>: CrossPoint names downloads
+        // "{author} - {title}.epub", so an author string just bloats the
+        // filename. The feed-level <author> below keeps the Atom feed valid.
+        entries.push_str(&format!(
+            r#"  <entry>
     <id>urn:my-news-station:{id}</id>
     <title>{title}</title>
     <updated>{updated}</updated>
     <link rel="http://opds-spec.org/acquisition" href="/media/{href}" type="application/epub+zip"/>
   </entry>
 "#,
-                    id = xml_escape(file_name),
-                    title = xml_escape(&title),
-                    updated = mtime.to_rfc3339(),
-                    href = xml_escape(file_name),
-                ));
-            }
-            OpdsItem::Broadsheet { file_name, mtime } => {
-                let title = match date_re.find(file_name) {
-                    Some(m) => {
-                        let yymmdd = &m.as_str()[2..];
-                        format!("{}-broadsheet-newspaper", yymmdd)
-                    }
-                    None => file_name.clone(),
-                };
-                entries.push_str(&format!(
-                    r#"  <entry>
-    <id>urn:my-news-station:broadsheet:{id}</id>
-    <title>{title}</title>
-    <updated>{updated}</updated>
-    <category term="newspaper" label="Broadsheet Edition"/>
-    <link rel="http://opds-spec.org/acquisition" href="/media/{href}" type="application/pdf"/>
-  </entry>
-"#,
-                    id = xml_escape(file_name),
-                    title = xml_escape(&title),
-                    updated = mtime.to_rfc3339(),
-                    href = xml_escape(file_name),
-                ));
-            }
-        }
+            id = xml_escape(file_name),
+            title = xml_escape(&title),
+            updated = mtime.to_rfc3339(),
+            href = xml_escape(file_name),
+        ));
     }
 
     let feed = format!(
@@ -1365,7 +1261,7 @@ async fn handle_regen_audio(
 
     let mut envs: Vec<(&'static str, String)> = vec![("REGEN_DATE", date_str)];
     if let Some(t) = params.track {
-        if matches!(t.as_str(), "radio" | "podcast" | "epub" | "tldr" | "broadsheet") {
+        if matches!(t.as_str(), "radio" | "podcast" | "epub" | "tldr") {
             envs.push(("REGEN_TRACK", t));
         }
     }
@@ -1520,7 +1416,6 @@ async fn cleanup_old_files(data_dir: &Path, max_age_days: i64) {
         // Only clean up generated media files and temporary snapshots
         let is_deletable = file_name.ends_with(".epub")
             || file_name.ends_with(".mp3")
-            || file_name.ends_with(".pdf")
             || file_name.starts_with("articles-")
             || file_name.starts_with("preview-");
         if !is_deletable {
@@ -2560,12 +2455,6 @@ mod tests {
         // Old media files must be deleted
         assert!(!old_epub.exists(), "old epub should be deleted");
         assert!(!old_mp3.exists(), "old mp3 should be deleted");
-
-        // Verify broadsheet PDF is cleaned up when old
-        let old_pdf = tmp.0.join("daily-broadsheet-20200101-000000.pdf");
-        std::fs::write(&old_pdf, "pdf content").unwrap();
-        cleanup_old_files(&tmp.0, -1).await;
-        assert!(!old_pdf.exists(), "old broadsheet pdf should be deleted");
     }
 
     #[test]
@@ -2596,101 +2485,5 @@ mod tests {
         // Huge line was sanitized / truncated
         assert!(history[9].lines[1].contains("payload truncated"));
         assert!(history[9].lines[1].len() < 500);
-    }
-
-    #[test]
-    fn test_broadsheet_config_toggle() {
-        std::env::remove_var("ENABLE_BROADSHEET_EDITION");
-
-        // Default is false
-        let default_cfg = AppConfig::default();
-        assert!(!default_cfg.is_broadsheet_enabled());
-
-        // Top-level flag enable_broadsheet_edition = true
-        let mut cfg1 = AppConfig::default();
-        cfg1.enable_broadsheet_edition = true;
-        assert!(cfg1.is_broadsheet_enabled());
-
-        // editions.broadsheet.enabled = true
-        let mut cfg2 = AppConfig::default();
-        cfg2.editions = Some(EditionsConfig {
-            broadsheet: BroadsheetConfig { enabled: true },
-        });
-        assert!(cfg2.is_broadsheet_enabled());
-
-        // Environment variable ENABLE_BROADSHEET_EDITION overrides config
-        std::env::set_var("ENABLE_BROADSHEET_EDITION", "true");
-        let cfg_disabled = AppConfig::default();
-        assert!(cfg_disabled.is_broadsheet_enabled());
-
-        std::env::set_var("ENABLE_BROADSHEET_EDITION", "false");
-        let mut cfg_enabled = AppConfig::default();
-        cfg_enabled.enable_broadsheet_edition = true;
-        assert!(!cfg_enabled.is_broadsheet_enabled(), "env var false should override config");
-
-        std::env::remove_var("ENABLE_BROADSHEET_EDITION");
-    }
-
-    #[test]
-    fn test_list_media_files_recognizes_broadsheet_pdf() {
-        let tmp = TempDir::new("list_media_broadsheet_test");
-        let epub_file = tmp.0.join("daily-news-20260907-120000.epub");
-        let pdf_file = tmp.0.join("daily-broadsheet-20260907-120000.pdf");
-
-        std::fs::write(&epub_file, "epub").unwrap();
-        std::fs::write(&pdf_file, "pdf").unwrap();
-
-        let entries = list_media_files(&tmp.0);
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.date, "20260907-120000");
-        assert_eq!(entry.epub.as_deref(), Some("daily-news-20260907-120000.epub"));
-        assert_eq!(entry.broadsheet.as_deref(), Some("daily-broadsheet-20260907-120000.pdf"));
-    }
-
-    #[tokio::test]
-    async fn test_opds_broadsheet_inclusion_and_exclusion() {
-        std::env::remove_var("ENABLE_BROADSHEET_EDITION");
-        let tmp = TempDir::new("opds_broadsheet_test");
-        let state = AppState {
-            data_dir: Arc::new(tmp.0.clone()),
-            is_scraping: Arc::new(AtomicBool::new(false)),
-            scraper_logs: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
-            last_run_success: Arc::new(AtomicBool::new(true)),
-        };
-
-        let epub_file = tmp.0.join("daily-news-20260907-120000.epub");
-        let pdf_file = tmp.0.join("daily-broadsheet-20260907-120000.pdf");
-        std::fs::write(&epub_file, "epub").unwrap();
-        std::fs::write(&pdf_file, "pdf").unwrap();
-
-        // 1. When disabled (default), OPDS omits the broadsheet PDF
-        let config_file = tmp.0.join("config.json");
-        let mut cfg = AppConfig::default();
-        cfg.enable_broadsheet_edition = false;
-        std::fs::write(&config_file, serde_json::to_string(&cfg).unwrap()).unwrap();
-
-        let response = handle_opds(State(state.clone())).await.unwrap();
-        let body = response.into_response();
-        let bytes = axum::body::to_bytes(body.into_body(), usize::MAX).await.unwrap();
-        let feed_xml = String::from_utf8_lossy(&bytes);
-
-        assert!(feed_xml.contains("260907-news-ai"));
-        assert!(!feed_xml.contains("Broadsheet Edition"));
-        assert!(!feed_xml.contains("daily-broadsheet"));
-
-        // 2. When enabled, OPDS includes the broadsheet PDF with proper category & type
-        cfg.enable_broadsheet_edition = true;
-        std::fs::write(&config_file, serde_json::to_string(&cfg).unwrap()).unwrap();
-
-        let response2 = handle_opds(State(state.clone())).await.unwrap();
-        let body2 = response2.into_response();
-        let bytes2 = axum::body::to_bytes(body2.into_body(), usize::MAX).await.unwrap();
-        let feed_xml2 = String::from_utf8_lossy(&bytes2);
-
-        assert!(feed_xml2.contains("<category term=\"newspaper\" label=\"Broadsheet Edition\"/>"));
-        assert!(feed_xml2.contains("urn:my-news-station:broadsheet:daily-broadsheet-20260907-120000.pdf"));
-        assert!(feed_xml2.contains("type=\"application/pdf\""));
-        assert!(feed_xml2.contains("<title>260907-broadsheet-newspaper</title>"));
     }
 }
