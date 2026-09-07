@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════════════════════════════
+# Kustomize / kubectl patch to enable the Broadsheet Newspaper Edition
+#
+# Usage with kubectl:
+#   kubectl patch deployment news-server -n my-news --patch-file k8s/patch-enable-broadsheet.yaml
+#   kubectl patch cronjob news-scraper -n my-news --patch-file k8s/patch-enable-broadsheet.yaml
+#
+# Or add to your kustomization.yaml:
+#   patches:
+#     - path: patch-enable-broadsheet.yaml
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-server
+  namespace: my-news
+spec:
+  template:
+    spec:
+      containers:
+        - name: news-server
+          env:
+            - name: ENABLE_BROADSHEET_EDITION
+              value: "true"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-scraper
+  namespace: my-news
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: scraper
+              env:
+                - name: ENABLE_BROADSHEET_EDITION
+                  value: "true"

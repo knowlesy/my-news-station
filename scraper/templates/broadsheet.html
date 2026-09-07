@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ masthead_title }} — {{ date_display }}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=Cinzel:wght@600;700;900&display=swap');
+
+    @page {
+      size: 420mm 297mm landscape;
+      margin: 8mm 10mm;
+      @bottom-center {
+        content: "Page " counter(page) " — The Daily Broadsheet";
+        font-family: 'Newsreader', serif;
+        font-size: 7.5pt;
+        color: #66635e;
+      }
+    }
+
+    :root {
+      --newsprint: #f5f2eb;
+      --ink: #181716;
+      --hairline: #d0cdc7;
+      --rule-heavy: #2b2a28;
+      --rule-double: #3a3834;
+      --lead-red: #8b1e1e;
+      --subtext: #59554e;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    body {
+      background-color: var(--newsprint);
+      color: var(--ink);
+      font-family: 'Newsreader', 'Georgia', 'Times New Roman', serif;
+      margin: 0;
+      padding: 0;
+      line-height: 1.35;
+      font-size: 9.5pt;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       DUAL-PAGE SPREAD GEOMETRY
+       A3 Landscape: 420mm × 297mm
+       Two 3-column pages with center spine fold
+       ══════════════════════════════════════════════════════════ */
+    .spread-container {
+      width: 400mm;
+      height: 281mm;
+      display: flex;
+      flex-direction: column;
+      page-break-after: always;
+      break-after: page;
+      overflow: hidden;
+      margin: 0 auto;
+    }
+
+    /* ── Front Page Masthead Header ── */
+    .masthead-wrap {
+      width: 100%;
+      border-bottom: 2.5px solid var(--rule-heavy);
+      padding-bottom: 2mm;
+      margin-bottom: 3mm;
+    }
+
+    .top-meta-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 7.5pt;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-family: 'Playfair Display', serif;
+      border-bottom: 1px solid var(--hairline);
+      padding-bottom: 1mm;
+      margin-bottom: 1.5mm;
+      color: var(--subtext);
+    }
+
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-align: center;
+      padding: 1mm 0 2mm 0;
+    }
+
+    .masthead-title {
+      font-family: 'Cinzel', 'Playfair Display', serif;
+      font-size: 34pt;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      margin: 0;
+      line-height: 0.95;
+      text-transform: uppercase;
+      flex: 1;
+    }
+
+    .masthead-side-slug {
+      width: 55mm;
+      font-size: 7.5pt;
+      line-height: 1.25;
+      color: var(--subtext);
+      text-align: left;
+    }
+    .masthead-side-slug.right {
+      text-align: right;
+    }
+
+    .edition-rule {
+      display: flex;
+      justify-content: space-between;
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      border-top: 1px solid var(--hairline);
+      border-bottom: 1px solid var(--hairline);
+      padding: 1mm 0;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
+    /* ── Spread Running Header (Page 2+) ── */
+    .running-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--rule-heavy);
+      padding-bottom: 1mm;
+      margin-bottom: 3mm;
+      color: var(--subtext);
+    }
+
+    /* ── Dual Spread Body (Left 3 cols, Spine, Right 3 cols) ── */
+    .spread-body {
+      display: flex;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .page-half {
+      flex: 1;
+      height: 100%;
+      overflow: hidden;
+      column-count: 3;
+      column-gap: 6mm;
+      column-rule: 1px solid var(--hairline);
+    }
+
+    .left-half {
+      padding-right: 4mm;
+    }
+
+    .right-half {
+      padding-left: 4mm;
+    }
+
+    /* Center spine / hinge margin between the two 3-column halves */
+    .spine-gutter {
+      width: 8mm;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      position: relative;
+    }
+
+    .spine-rule {
+      width: 1px;
+      height: 100%;
+      border-left: 1px dashed rgba(208, 205, 199, 0.6);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       EDITORIAL ARTICLE TYPOGRAPHY & LAYOUT
+       ══════════════════════════════════════════════════════════ */
+    .article {
+      break-inside: avoid-column;
+      margin-bottom: 4.5mm;
+      padding-bottom: 3.5mm;
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .article.no-border {
+      border-bottom: none;
+    }
+
+    .kicker {
+      font-family: 'Playfair Display', serif;
+      font-size: 7pt;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--lead-red);
+      margin-bottom: 1mm;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .headline {
+      font-family: 'Playfair Display', 'Bodoni MT', serif;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 1.5mm 0;
+      line-height: 1.1;
+      color: var(--ink);
+    }
+
+    .headline.banner {
+      font-size: 23pt;
+      font-weight: 900;
+      margin-bottom: 2mm;
+    }
+
+    .headline.primary {
+      font-size: 15pt;
+    }
+
+    .headline.secondary {
+      font-size: 12pt;
+    }
+
+    .headline.tertiary {
+      font-size: 10.5pt;
+    }
+
+    .byline {
+      font-size: 7.5pt;
+      font-style: italic;
+      color: var(--subtext);
+      margin-bottom: 2mm;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .byline .source-tag {
+      font-style: normal;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--ink);
+    }
+
+    .article-body {
+      text-align: justify;
+      text-justify: inter-word;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+      margin: 0;
+    }
+
+    .article-body p {
+      margin: 0 0 2mm 0;
+      text-indent: 3mm;
+    }
+
+    .article-body p:first-of-type {
+      text-indent: 0;
+    }
+
+    /* ── Drop-Cap for Lead Story ── */
+    .lead-story .article-body p:first-of-type::first-letter {
+      float: left;
+      font-family: 'Playfair Display', serif;
+      font-size: 3.5rem;
+      line-height: 0.8;
+      padding-top: 2px;
+      padding-right: 6px;
+      padding-bottom: 0;
+      margin-right: 2px;
+      font-weight: 900;
+      color: var(--lead-red);
+    }
+
+    /* ── Article QR Code ── */
+    .article-qr-wrap {
+      float: right;
+      margin: 0 0 2mm 3mm;
+      padding: 1.5mm;
+      background: #ffffff;
+      border: 1px solid var(--hairline);
+      text-align: center;
+      line-height: 1;
+    }
+
+    .article-qr-wrap img {
+      display: block;
+      width: 18mm;
+      height: 18mm;
+    }
+
+    .article-qr-wrap .qr-caption {
+      font-size: 5.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #777;
+      margin-top: 1mm;
+      display: block;
+    }
+
+    /* ── Source Summary Box ── */
+    .feature-box {
+      background: rgba(208, 205, 199, 0.2);
+      border: 1px solid var(--hairline);
+      border-top: 2px solid var(--rule-heavy);
+      padding: 3mm;
+      margin-bottom: 4mm;
+      break-inside: avoid-column;
+    }
+
+    .feature-box-title {
+      font-family: 'Cinzel', serif;
+      font-size: 9.5pt;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 1.5mm;
+      border-bottom: 1px solid var(--hairline);
+      padding-bottom: 1mm;
+    }
+  </style>
+</head>
+<body>
+
+  {{ spreads_html }}
+
+</body>
+</html>

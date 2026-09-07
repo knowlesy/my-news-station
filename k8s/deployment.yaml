@@ -87,6 +87,8 @@ spec:
               value: "0.0.0.0:3000"
             - name: RUST_LOG
               value: "news_server=info,tower_http=warn"
+            - name: ENABLE_BROADSHEET_EDITION
+              value: "false"
             # LLM credentials from Secret
             - name: LLM_BACKEND
               valueFrom:
@@ -251,6 +253,8 @@ spec:
                   value: /app/data
                 - name: PYTHONUNBUFFERED
                   value: "1"
+                - name: ENABLE_BROADSHEET_EDITION
+                  value: "false"
                 - name: LLM_BACKEND
                   valueFrom:
                     secretKeyRef:

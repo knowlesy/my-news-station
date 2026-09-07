@@ -32,6 +32,11 @@ from playwright_stealth import Stealth
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+try:
+    from broadsheet import build_broadsheet_pdf, is_broadsheet_enabled
+except ImportError:
+    from scraper.broadsheet import build_broadsheet_pdf, is_broadsheet_enabled
+
 # ═══════════════════════════════════════════════════════════════════
 # CONFIGURATION — override all values via environment variables
 # ═══════════════════════════════════════════════════════════════════
@@ -1664,6 +1669,10 @@ async def run_pipeline() -> None:
     if "tldr" in responses:
         build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
 
+    # ── Phase 5c: Broadsheet newspaper edition (if enabled) ──────
+    if is_broadsheet_enabled():
+        await build_broadsheet_pdf(all_articles, date_str)
+
     # ── Phase 5b: Save article sidecar for later audio regen ─────
     # Use date-only key (YYYYMMDD) so regen can always find it by date prefix
     date_only = date_str[:8]
@@ -1809,6 +1818,14 @@ async def run_regen_audio(date_str: str) -> None:
         log.info("══════════════════════════════════════════════════")
         return
 
+    if regen_track == "broadsheet":
+        log.info("Broadsheet rebuild requested")
+        await build_broadsheet_pdf(all_articles, date_str)
+        log.info("══════════════════════════════════════════════════")
+        log.info("  Broadsheet rebuild complete — %s (no LLM call needed)", date_str)
+        log.info("══════════════════════════════════════════════════")
+        return
+
     if regen_track == "tldr":
         log.info("TLDR-only regen requested")
         responses = run_llm_tasks(all_articles, ["tldr"])
@@ -1835,6 +1852,9 @@ async def run_regen_audio(date_str: str) -> None:
         # Full regen re-calls the LLM anyway, so refresh the TLDR digest too
         # (overwrites the existing daily-tldr file for this date key)
         build_tldr_epub(extract_xml_block(responses["tldr"], "tldr_digest"), date_str)
+
+    if is_broadsheet_enabled():
+        await build_broadsheet_pdf(all_articles, date_str)
 
     # Name the MP3s with the full group key passed by the frontend (usually
     # YYYYMMDD-HHMMSS, matching the EPUB's timestamp). The server groups media

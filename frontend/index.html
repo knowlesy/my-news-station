@@ -1166,6 +1166,7 @@
         </div>
         <div style="display:flex; align-items:center; gap:0.5rem;">
           <button id="regenBtn-epub" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" title="Rebuild this EPUB from saved articles — no AI call" aria-label="Rebuild EPUB">🔁 Rebuild</button>
+          <button id="regenBtn-broadsheet" class="btn" style="display:none; font-size:0.72rem; height:30px; padding:0 0.6rem; white-space:nowrap;" title="Rebuild the Broadsheet PDF print edition from saved articles" aria-label="Rebuild Broadsheet">📰 Broadsheet</button>
           <div class="epub-nav-controls" role="navigation" aria-label="Chapter navigation">
             <button id="prevChapter" class="btn btn-nav" disabled title="Previous chapter" aria-label="Previous chapter">‹</button>
             <span   class="chapter-indicator" id="chapterIndicator" aria-live="polite">—</span>
@@ -1187,14 +1188,25 @@
 
       <div class="epub-footer">
         <span id="epubPageInfo" style="font-size:0.78rem;color:var(--ctp-subtext0)">—</span>
-        <a id="epubDownloadBtn"
-           class="btn btn-download"
-           href="#"
-           download
-           style="display:none"
-           aria-label="Download EPUB file">
-          ⬇ Download EPUB
-        </a>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <a id="broadsheetDownloadBtn"
+             class="btn btn-download"
+             href="#"
+             target="_blank"
+             download
+             style="display:none"
+             aria-label="Download Broadsheet PDF">
+            📰 Broadsheet PDF
+          </a>
+          <a id="epubDownloadBtn"
+             class="btn btn-download"
+             href="#"
+             download
+             style="display:none"
+             aria-label="Download EPUB file">
+            ⬇ Download EPUB
+          </a>
+        </div>
       </div>
     </section>
 
