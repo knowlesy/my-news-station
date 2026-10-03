@@ -57,8 +57,8 @@ jobs:
     env:
       GOOGLE_AI_KEY: ""
       ANTHROPIC_API_KEY: ""
-      DATA_DIR: ${{ runner.temp }}/news-scraper-test-data
-      COOKIES_PATH: ${{ runner.temp }}/news-scraper-no-cookies.json
+      DATA_DIR: /tmp/news-scraper-test-data
+      COOKIES_PATH: /tmp/news-scraper-no-cookies.json
     steps:
       - uses: actions/checkout@v5
 
