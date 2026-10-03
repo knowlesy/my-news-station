@@ -5,12 +5,152 @@ Run with:  python -m pytest scraper/tests/
 """
 import json
 import sys
+import types
 from pathlib import Path
+
+dotenv_stub = types.ModuleType("dotenv")
+dotenv_stub.load_dotenv = lambda *args, **kwargs: False
+dotenv_stub.dotenv_values = lambda *args, **kwargs: {}
+sys.modules["dotenv"] = dotenv_stub
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import scraper  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def forbid_network(monkeypatch):
+    def blocked_request(*args, **kwargs):
+        raise AssertionError("Network requests are forbidden in scraper unit tests")
+    monkeypatch.setattr(scraper.requests.sessions.Session, "request", blocked_request)
+
+
+class FakeGeminiResponse:
+    def __init__(self, status=200, body=None, text="FAKE_PROVIDER_BODY_MARKER"):
+        self.status_code = status
+        self.body = body
+        self.text = text
+
+    def json(self):
+        if isinstance(self.body, Exception):
+            raise self.body
+        return self.body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise scraper.requests.HTTPError(self.text)
+
+
+@pytest.fixture
+def gemini_api(monkeypatch):
+    monkeypatch.setattr(scraper, "GOOGLE_AI_KEY", "FAKE_KEY_MARKER")
+    monkeypatch.setattr(scraper, "GEMINI_MODEL", "fixture-model")
+    state = types.SimpleNamespace(responses=[], calls=[], sleeps=[])
+
+    def fake_post(url, **kwargs):
+        state.calls.append((url, kwargs))
+        if not state.responses:
+            raise AssertionError("Unexpected fake Gemini request")
+        response = state.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(scraper.requests, "post", fake_post)
+    monkeypatch.setattr(scraper.time, "sleep", state.sleeps.append)
+    return state
+
+
+def test_gemini_joins_visible_text_parts_and_preserves_request_contract(gemini_api):
+    gemini_api.responses.append(FakeGeminiResponse(body={"candidates": [{"content": {"parts": [
+        {"text": "FAKE_THOUGHT_MARKER", "thought": True},
+        {"inlineData": {"data": "nontext-fixture"}},
+        {"text": "First "}, {"text": "second", "thought": False},
+    ]}}]}))
+    assert scraper.call_gemini("FAKE_PROMPT_MARKER") == "First second"
+    url, arguments = gemini_api.calls[0]
+    assert url.endswith("/models/fixture-model:generateContent")
+    assert "FAKE_KEY_MARKER" not in url
+    assert arguments["headers"] == {"x-goog-api-key": "FAKE_KEY_MARKER"}
+    assert arguments["json"]["contents"] == [{"parts": [{"text": "FAKE_PROMPT_MARKER"}]}]
+    assert arguments["json"]["generationConfig"] == {"maxOutputTokens": 16384, "temperature": 0.4}
+    assert arguments["timeout"] == 180
+
+
+@pytest.mark.parametrize("body", [
+    None, [], {}, {"candidates": []}, {"candidates": {}}, {"candidates": [None]},
+    {"candidates": [{"content": None}]}, {"candidates": [{"content": {"parts": {}}}]},
+    {"candidates": [{"content": {"parts": []}}]},
+    {"candidates": [{"content": {"parts": [{"text": "   "}]}}]},
+    {"candidates": [{"content": {"parts": [{"text": 123}]}}]},
+    {"candidates": [{"content": {"parts": [None, "malformed", {"inlineData": {"data": "FAKE_PROVIDER_BODY_MARKER"}}]}}]},
+    {"candidates": [{"content": {"parts": [{"text": "FAKE_PROVIDER_BODY_MARKER", "thought": True}]}}]},
+    {"promptFeedback": {"blockReason": "SAFETY", "detail": "FAKE_PROVIDER_BODY_MARKER"}},
+    {"candidates": [{"finishReason": "SAFETY", "content": {"parts": [{"text": "FAKE_PROVIDER_BODY_MARKER"}]}}]},
+    json.JSONDecodeError("FAKE_PROVIDER_BODY_MARKER", "FAKE_KEY_MARKER FAKE_PROMPT_MARKER", 0),
+])
+def test_gemini_rejects_unusable_output_without_provider_content(gemini_api, caplog, body):
+    gemini_api.responses.append(FakeGeminiResponse(body=body))
+    with pytest.raises(RuntimeError, match="Gemini.*fixture-model") as error:
+        scraper.call_gemini("FAKE_PROMPT_MARKER")
+    diagnostic = str(error.value) + caplog.text
+    for marker in ["FAKE_PROVIDER_BODY_MARKER", "FAKE_KEY_MARKER", "FAKE_PROMPT_MARKER"]:
+        assert marker not in diagnostic
+    assert len(str(error.value)) < 200
+    assert len(gemini_api.calls) == 1
+    assert gemini_api.sleeps == []
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_gemini_http_errors_redact_body_and_do_not_guess_a_model(gemini_api, caplog, status):
+    gemini_api.responses.append(FakeGeminiResponse(status=status, text="FAKE_PROVIDER_BODY_MARKER FAKE_KEY_MARKER FAKE_PROMPT_MARKER"))
+    with pytest.raises(RuntimeError) as error:
+        scraper.call_gemini("FAKE_PROMPT_MARKER")
+    diagnostic = str(error.value) + caplog.text
+    assert str(status) in diagnostic
+    assert "fixture-model" in diagnostic
+    assert "gemini-2.5-flash" not in diagnostic
+    for marker in ["FAKE_PROVIDER_BODY_MARKER", "FAKE_KEY_MARKER", "FAKE_PROMPT_MARKER"]:
+        assert marker not in diagnostic
+    if status == 404:
+        assert "availability" in str(error.value)
+    assert gemini_api.sleeps == []
+
+
+def test_gemini_preserves_transient_retry_sequence_and_provider_delay(gemini_api, caplog):
+    gemini_api.responses.extend([
+        FakeGeminiResponse(status=429, text="FAKE_PROVIDER_BODY_MARKER retry in 92.6s"),
+        FakeGeminiResponse(status=500), FakeGeminiResponse(status=503),
+        FakeGeminiResponse(body={"candidates": [{"content": {"parts": [{"text": "success"}]}}]}),
+    ])
+    assert scraper.call_gemini("FAKE_PROMPT_MARKER") == "success"
+    assert gemini_api.sleeps == [95, 60, 120]
+    assert len(gemini_api.calls) == 4
+    assert "FAKE_PROVIDER_BODY_MARKER" not in caplog.text
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_gemini_stops_after_four_transient_attempts(gemini_api, caplog, status):
+    gemini_api.responses.extend(FakeGeminiResponse(status=status) for _ in range(4))
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        scraper.call_gemini("FAKE_PROMPT_MARKER")
+    assert gemini_api.sleeps == [30, 60, 120]
+    assert len(gemini_api.calls) == 4
+    assert "FAKE_PROVIDER_BODY_MARKER" not in caplog.text
+
+
+@pytest.mark.parametrize("exception_type", [scraper.requests.Timeout, scraper.requests.ConnectionError])
+def test_gemini_transport_errors_are_sanitized_without_new_retries(gemini_api, caplog, exception_type):
+    gemini_api.responses.append(exception_type("FAKE_PROVIDER_BODY_MARKER FAKE_KEY_MARKER FAKE_PROMPT_MARKER"))
+    with pytest.raises(RuntimeError, match="transport error.*fixture-model") as error:
+        scraper.call_gemini("FAKE_PROMPT_MARKER")
+    diagnostic = str(error.value) + caplog.text
+    for marker in ["FAKE_PROVIDER_BODY_MARKER", "FAKE_KEY_MARKER", "FAKE_PROMPT_MARKER"]:
+        assert marker not in diagnostic
+    assert error.value.__suppress_context__ is True
+    assert gemini_api.sleeps == []
+    assert len(gemini_api.calls) == 1
 
 
 # ── extract_xml_block ────────────────────────────────────────────────

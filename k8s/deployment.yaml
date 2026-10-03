@@ -33,7 +33,7 @@ stringData:
   GOOGLE_AI_KEY:     ""               # Required if LLM_BACKEND=gemini
   ANTHROPIC_API_KEY: ""               # Required if LLM_BACKEND=claude_api
   CLAUDE_MODEL:      "claude-opus-4-8"
-  GEMINI_MODEL:      "gemini-2.0-flash"
+  GEMINI_MODEL:      "gemini-2.5-flash"
 
 ---
 # ── Web Server Deployment ─────────────────────────────────────────

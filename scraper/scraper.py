@@ -244,15 +244,64 @@ def call_gemini(prompt: str) -> str:
     delays = (30, 60, 120)
     for attempt in range(len(delays) + 1):
         log.info("→ Calling Gemini (%s)…", GEMINI_MODEL)
-        resp = requests.post(url, json=payload, headers=headers, timeout=180)
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=180)
+        except requests.RequestException:
+            log.error("Gemini transport error for model %s", GEMINI_MODEL)
+            raise RuntimeError(
+                f"Gemini transport error for model '{GEMINI_MODEL}'; check network availability."
+            ) from None
         if resp.status_code == 200:
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            try:
+                result = resp.json()
+            except ValueError:
+                raise RuntimeError(
+                    f"Gemini returned invalid JSON for model '{GEMINI_MODEL}'."
+                ) from None
+            if not isinstance(result, dict):
+                raise RuntimeError(
+                    f"Gemini returned a malformed response for model '{GEMINI_MODEL}'."
+                )
+            feedback = result.get("promptFeedback")
+            if isinstance(feedback, dict) and feedback.get("blockReason") and feedback.get("blockReason") != "BLOCK_REASON_UNSPECIFIED":
+                raise RuntimeError(
+                    f"Gemini blocked the request for model '{GEMINI_MODEL}'; no text was returned."
+                )
+            candidates = result.get("candidates")
+            if not isinstance(candidates, list) or not candidates:
+                raise RuntimeError(
+                    f"Gemini returned no candidates for model '{GEMINI_MODEL}'; check availability or blocking."
+                )
+            candidate = candidates[0]
+            if not isinstance(candidate, dict):
+                raise RuntimeError(
+                    f"Gemini returned a malformed candidate for model '{GEMINI_MODEL}'."
+                )
+            if candidate.get("finishReason") in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"):
+                raise RuntimeError(
+                    f"Gemini blocked the response for model '{GEMINI_MODEL}'; no text was returned."
+                )
+            content = candidate.get("content")
+            parts = content.get("parts") if isinstance(content, dict) else None
+            if not isinstance(parts, list):
+                raise RuntimeError(
+                    f"Gemini returned malformed content for model '{GEMINI_MODEL}'."
+                )
+            text = "".join(
+                part["text"] for part in parts
+                if isinstance(part, dict) and isinstance(part.get("text"), str) and not part.get("thought")
+            )
+            if not text.strip():
+                raise RuntimeError(
+                    f"Gemini returned no usable text for model '{GEMINI_MODEL}'."
+                )
+            return text
 
-        log.error("Gemini API error %d: %s", resp.status_code, resp.text[:500])
+        log.error("Gemini API error %d for model %s", resp.status_code, GEMINI_MODEL)
         if resp.status_code == 404:
             raise RuntimeError(
-                f"Gemini model '{GEMINI_MODEL}' not found (404).\n"
-                f"Try setting GEMINI_MODEL=gemini-2.5-flash in your .env / Secret."
+                f"Gemini model '{GEMINI_MODEL}' not found (404); "
+                "check its availability for this API and account."
             )
         if resp.status_code in (429, 500, 503) and attempt < len(delays):
             delay = delays[attempt]
@@ -265,7 +314,9 @@ def call_gemini(prompt: str) -> str:
             )
             time.sleep(delay)
             continue
-        resp.raise_for_status()
+        raise RuntimeError(
+            f"Gemini API request failed (HTTP {resp.status_code}, model '{GEMINI_MODEL}')."
+        )
 
 
 def call_claude_api(prompt: str) -> str:

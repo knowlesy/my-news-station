@@ -50,6 +50,24 @@ jobs:
           pip install --upgrade pip
           pip install --dry-run --no-cache-dir -r scraper/requirements.txt
 
+  python-tests:
+    name: Python scraper tests
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    env:
+      GOOGLE_AI_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      DATA_DIR: /tmp/news-scraper-test-data
+      COOKIES_PATH: /tmp/news-scraper-no-cookies.json
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install test dependencies
+        run: pip install -r scraper/requirements.txt pytest
+
+      - name: Test scraper
+        run: python -m pytest scraper/tests/
+
   docker:
     name: Image builds
     runs-on: ubuntu-latest
