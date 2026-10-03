@@ -74,7 +74,7 @@ def test_gemini_joins_visible_text_parts_and_preserves_request_contract(gemini_a
     assert "FAKE_KEY_MARKER" not in url
     assert arguments["headers"] == {"x-goog-api-key": "FAKE_KEY_MARKER"}
     assert arguments["json"]["contents"] == [{"parts": [{"text": "FAKE_PROMPT_MARKER"}]}]
-    assert arguments["json"]["generationConfig"] == {"maxOutputTokens": 16384, "temperature": 0.4}
+    assert arguments["json"]["generationConfig"] == {"maxOutputTokens": 32768, "temperature": 0.4}
     assert arguments["timeout"] == 180
 
 
