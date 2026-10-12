@@ -5,7 +5,7 @@
 
 # ── Browser automation & stealth ─────────────────────────────────
 playwright>=1.44.0
-playwright-stealth>=1.0.6
+playwright-stealth>=2.0.3
 
 # ── Content extraction ───────────────────────────────────────────
 # trafilatura 2.x has relaxed lxml requirements + Python 3.14 support
