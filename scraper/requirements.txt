@@ -16,7 +16,7 @@ beautifulsoup4>=4.15.0
 lxml>=6.1.1
 
 # ── HTTP client (Gemini REST calls) ─────────────────────────────
-requests>=2.32.0
+requests>=2.34.2
 
 # ── NLP / curation ───────────────────────────────────────────────
 scikit-learn>=1.9.0
